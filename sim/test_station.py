@@ -38,3 +38,54 @@ def test_read_all_matches_yaml_defaults(port):
     # inputs without a default read as 0
     assert got[("input_register", 0)] == 0
     assert got[("discrete_input", 0)] == 0
+
+
+def wait_for(fn, timeout=3.0):
+    end = time.time() + timeout
+    while time.time() < end:
+        v = fn()
+        if v:
+            return v
+        time.sleep(0.05)
+    return fn()
+
+
+def get(port, kind, addr):
+    return poke.read_all("127.0.0.1", port)[(kind, addr)]
+
+
+def test_crc16_modbus_reference():
+    assert station.crc16(b"123456789") == 0x4B37
+
+
+def test_poke_write_changes_logic_hash(port):
+    h0 = wait_for(lambda: get(port, "input_register", 10))
+    poke.write("holding", 1, 900, "127.0.0.1", port)
+    assert get(port, "holding_register", 1) == 900
+    assert wait_for(lambda: get(port, "input_register", 10) != h0)
+
+
+def test_auto_pump_follows_setpoints(port):
+    poke.write("holding", 100, 300, "127.0.0.1", port)  # below LEVEL_LOW_SP 400
+    assert wait_for(lambda: get(port, "coil", 0) == 1)
+    poke.write("holding", 100, 900, "127.0.0.1", port)  # above LEVEL_HIGH_SP 850
+    assert wait_for(lambda: get(port, "coil", 0) == 0)
+
+
+def test_safe_mode_ignores_remote_writes_and_stops_doser(port):
+    poke.write("coil", 3, 1, "127.0.0.1", port)
+    assert wait_for(lambda: get(port, "coil", 1) == 0)
+    poke.write("holding", 0, 77, "127.0.0.1", port)
+    poke.write("coil", 2, 0, "127.0.0.1", port)
+    assert get(port, "holding_register", 0) == 10
+    assert get(port, "coil", 2) == 1
+    poke.write("coil", 3, 0, "127.0.0.1", port)  # SAFE_MODE itself stays writable
+    assert get(port, "coil", 3) == 0
+    poke.write("holding", 0, 77, "127.0.0.1", port)
+    assert get(port, "holding_register", 0) == 77
+
+
+def test_uptime_counts_seconds(port):
+    u0 = get(port, "input_register", 11)
+    time.sleep(1.2)
+    assert get(port, "input_register", 11) > u0
