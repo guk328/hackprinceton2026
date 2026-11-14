@@ -11,7 +11,7 @@ Started by the CompE on Saturday morning to unblock gateway step 13. EE takes ov
 | 1. Blink + serial + Wi-Fi + IP on OLED | done | yes: serial, Wi-Fi, ping. OLED picture not confirmed by eye yet |
 | 2. Modbus server, full register map | done | yes (see below) |
 | 3. Relays follow coils 0 and 1 | done | yes (see below) |
-| 4. Inputs (pot, button, PIR, LDR, DHT11, IR) | not started | |
+| 4. Inputs (pot, button, PIR, LDR, DHT11, IR) | done (compiles, not flashed yet) | no: waiting for the parts to be wired |
 | 5. Control logic, safe mode, interlock, logic hash | not started | |
 | 6. OLED screen, LEDs, buzzer | not started | |
 | 7. Rig | not started | |
@@ -53,8 +53,15 @@ python -m platformio device monitor          # 115200 baud, Ctrl+C to quit
 | Relay 1 IN1 (pump) | 26 (`D26`) | in code and wired (step 3) |
 | Relay 2 IN2 (doser) | 27 (`D27`) | in code and wired (step 3) |
 
-Planned pins for later steps are in `docs/prompts/PROMPT_EE.md`; they move into this table
-when the code uses them.
+| Pot wiper -> `DEMAND_PCT` | 34 (`D34`, ADC1) | in code (step 4) |
+| Photoresistor AO -> `CABINET_OPEN` | 35 (`D35`, ADC1) | in code (step 4) |
+| DHT11 data | 4 (`D4`) | in code (step 4) |
+| PIR OUT -> `PRESENCE` | 19 (`D19`) | in code (step 4) |
+| IR module OUT -> `HIGH_LEVEL_SWITCH` | 18 (`D18`), active LOW | in code (step 4) |
+| Button -> `LOCAL_BUTTON` | 23 (`D23`), `INPUT_PULLUP`, other leg to GND | in code (step 4) |
+
+Planned pins for later steps (buzzer, LEDs) are in `docs/prompts/PROMPT_EE.md`; they move into
+this table when the code uses them.
 
 ## Wiring (module pin -> ESP32 pin)
 
@@ -70,7 +77,35 @@ Relay module (5 V, 2 channel, optocoupler type, blue JD-VCC jumper cap left in p
 
 Relay behaviour (measured, this module): **active LOW, releases cleanly at 3.3 V logic with VCC = 5 V and the JD-VCC cap on.** So the code drives `LOW` = on, `HIGH` = off; the floating-pin workaround from the spec is not needed. Relays are off from reset: the output latch is loaded HIGH through `gpio_set_level` before `pinMode(OUTPUT)`, first thing in `setup()`; floating pins also read as off on an active-LOW module. Each coil draws about 70 mA from USB through `VIN`; if the board drops off USB when a relay switches, use a direct laptop port and a short cable, or feed `JD-VCC` from a separate 5 V supply.
 
-OLED (0.96" SSD1306, I2C; not currently connected, rewire when the screen step comes):
+**Full wiring through step 6** (breadboard holes, LEDs on GPIO 16/17/32 with 220 ohm, buzzer on GPIO 25, pin table, wiring rounds): `docs/wiring_full.svg`. It replaces `docs/wiring.svg` for building; same pins, same three moved wires.
+
+### Step 4 wiring (breadboard rails; see `docs/wiring.svg`)
+
+Rails: **5V rail** <- `VIN`; **3V3 rail** <- `3V3` (bottom row, first pin); **GND rail** <- `GND` (bottom row, next to 3V3). Relay GND stays on the GND next to `VIN`.
+Three existing wires move: relay `VCC` VIN -> 5V rail; OLED `VCC` 3V3 pin -> 3V3 rail; OLED `GND` -> GND rail.
+
+| Module pin | -> | Goes to |
+|---|---|---|
+| DHT11 `S`/`OUT` | | `D4` (GPIO 4) |
+| DHT11 `VCC`/`+` | | 3V3 rail |
+| DHT11 `GND`/`-` | | GND rail |
+| IR `OUT` | | `D18` (GPIO 18) |
+| IR `VCC` / `GND` | | 3V3 rail / GND rail |
+| PIR `OUT` | | `D19` (GPIO 19) |
+| PIR `VCC` | | **5V rail** |
+| PIR `GND` | | GND rail |
+| Button leg A (opposite corner from B) | | `D23` (GPIO 23) |
+| Button leg B | | GND rail |
+| Pot wiper (middle) | | `D34` (GPIO 34, ADC1) |
+| Pot outer legs | | 3V3 rail and GND rail |
+| Photoresistor `AO` | | `D35` (GPIO 35, ADC1) |
+| Photoresistor `VCC` / `GND` | | 3V3 rail / GND rail (`DO` unused) |
+
+3V3 parts: DHT11, IR, photoresistor, pot, OLED. 5V parts: PIR and the relay. Never power the IR or photoresistor module from 5V (their output would reach the ESP32 pin at 5 V). The PIR output is 3.3 V so a 5 V PIR is safe. Analog inputs are on ADC1 only. PIR warm-up about 1 minute: the firmware ignores the PIR for 60 s after every boot.
+
+Hack worth knowing for judges: the DHT11 is read by bit-banging the pin, which blocks the loop for about 4 ms once every 2.5 s (interrupts off on one core). Fine for a demo, a product would use the RMT peripheral.
+
+OLED (0.96" SSD1306, I2C):
 
 - OLED GND -> GND
 - OLED VCC -> 3V3
