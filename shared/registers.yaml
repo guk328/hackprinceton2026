@@ -1,0 +1,41 @@
+# Backflow register map: single source of truth.
+# Firmware, software station, twin, gateway and attack scripts all follow this file.
+# Change it only after telling the whole team.
+
+unit_id: 1
+ports:
+  station: 502        # ESP32
+  sim_station: 5020   # software fallback
+  gateway: 1502       # what remote clients connect to
+
+coils:                # read/write, function codes 1, 5, 15
+  PUMP_CMD:   {addr: 0, default: 0, desc: "1 = run supply pump (relay 1)"}
+  DOSER_CMD:  {addr: 1, default: 1, desc: "1 = run chlorine doser (relay 2)"}
+  AUTO_MODE:  {addr: 2, default: 1, desc: "1 = station runs pump from level setpoints"}
+  SAFE_MODE:  {addr: 3, default: 0, desc: "1 = doser off, local level control, remote writes ignored"}
+  ALARM:      {addr: 4, default: 0, desc: "1 = buzzer + red LED"}
+
+discrete_inputs:      # read only, function code 2
+  PRESENCE:          {addr: 0, desc: "PIR motion within the last 60 s"}
+  CABINET_OPEN:      {addr: 1, desc: "photoresistor sees light"}
+  LOCAL_BUTTON:      {addr: 2, desc: "push button held"}
+  HIGH_LEVEL_SWITCH: {addr: 3, desc: "IR obstacle module, stands in for a float switch"}
+
+input_registers:      # read only, function code 4
+  DEMAND_PCT:       {addr: 0,  scale: 10, desc: "potentiometer, 0-100 % of max demand"}
+  CABINET_TEMP_C:   {addr: 1,  scale: 10, desc: "DHT11"}
+  CABINET_HUMIDITY: {addr: 2,  scale: 10, desc: "DHT11"}
+  LOGIC_HASH:       {addr: 10, scale: 1,  desc: "CRC16 of holding registers 0-4"}
+  UPTIME_S:         {addr: 11, scale: 1,  desc: "seconds since boot, wraps"}
+
+holding_registers:    # read/write, function codes 3, 6, 16
+  DOSER_RATE_PCT:  {addr: 0,   scale: 1,   default: 10,  min: 0,   max: 100}
+  LEVEL_HIGH_SP:   {addr: 1,   scale: 10,  default: 850, min: 500, max: 950}
+  LEVEL_LOW_SP:    {addr: 2,   scale: 10,  default: 400, min: 200, max: 700}
+  CHLORINE_TARGET: {addr: 3,   scale: 100, default: 100, min: 20,  max: 400}
+  LOGIC_VERSION:   {addr: 4,   scale: 1,   default: 1}
+  TANK_LEVEL_PCT:  {addr: 100, scale: 10,  default: 600, writer: twin}
+  CHLORINE_MGL:    {addr: 101, scale: 100, default: 100, writer: twin}
+
+# min/max above are the normal operating envelope used by gateway policy.
+# The station itself accepts any value: that is the weakness we are demonstrating.

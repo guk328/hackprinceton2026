@@ -1,0 +1,22 @@
+# secrets
+.env
+firmware/src/secrets.h
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# runtime output
+*.db
+gateway/reports/
+
+# firmware build
+firmware/.pio/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
