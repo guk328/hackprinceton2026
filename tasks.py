@@ -32,7 +32,7 @@ def main():
     if a.cmd == "sim":
         return run("-m", "sim.station", *extra)
     if a.cmd == "gateway":
-        return run("-m", "gateway.proxy")  # step 15 swaps in gateway.main (+ poller, API)
+        return run("-m", "gateway.main")
     if a.cmd == "test":
         return run("-m", "pytest", "-x", "-q", *a.paths)
     return not_built("demo", 28)
