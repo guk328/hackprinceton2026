@@ -96,3 +96,51 @@ The small level overshoot above 85% is due to discrete control sampling.
 Chlorine falls while the pump/doser are off and rises during the second fill;
 the fixed 10% dose does not hold the 1 mg/L starting concentration. Balance
 residuals verify numerical bookkeeping, not the real-world parameter choices.
+
+## Step 3 command and baseline forecasts
+
+`from physics import PlantState, Command, predict, step` now works. Prediction
+applies one raw command to a copied state and runs the same equations twice:
+candidate versus unchanged baseline. Neither input is mutated; no network,
+filesystem, wall clock, or external library is used in the forecast.
+
+Coils 0–4 map to pump, doser, automatic mode, safe mode and alarm. Holding
+registers 0–4 map to dose rate [%], high/low level setpoints [%], chlorine target
+[mg/L] and logic version. Decode setpoints by dividing raw values by 10 and
+chlorine target by 100. Target, version and alarm are stored configuration;
+they do not invent a target-tracking dosing controller. Twin-only registers
+100/101 and unknown addresses are rejected. Tests check names/addresses/scales
+against `shared/registers.yaml` without adding a YAML dependency to physics.
+
+SAFE_MODE uses local 40/85% setpoints and forces the doser off, matching the
+software station. Pump/doser/auto and holding 0–4 writes are ignored while safe
+mode is active; safe-mode/alarm coils remain available, as in the station.
+New state fields have defaults, so the README's original constructor still works.
+
+Each rollout includes t=0, advances in steps of at most 10 s and ends exactly
+at the requested horizon (a shorter final step if needed). Default 120 min
+means 720 steps and 721 points per trajectory. `baseline_trajectory` is an
+additional result field; both trajectories use `(plant-min, level %, mg/L)`.
+Horizon is bounded to 0–1440 plant-min to cap work/memory. Invalid inputs and
+numerical overflow return `safe=False` with SETPOINT_OUT_OF_RANGE at t=0;
+value/limit placeholders of 0 in that input-error result are not physical limits.
+
+**This is a forecast foundation, not the completed safety checker.** Until step 4
+implements the physical detectors, valid forecasts also return `safe=False`,
+`assessment_complete=False`, and an empty violations list. An empty list must
+not be interpreted as approval. The limit-check hook retains the first crossing
+per code. Baseline attribution is tested using a test-only detector: a same-code
+baseline hazard sets `pre_existing=True`, while candidate crossing time and
+`baseline_minutes_until` remain separate so accelerated harm is still visible.
+
+Verification: 14 standard-library physics tests pass (6 model + 8 forecast tests),
+including bad inputs, exact/partial horizons, pure repeatability, safe-mode
+behavior, wire scaling and baseline attribution. No dependencies were added.
+
+Printed example: start at 60%, manual pump on, demand 40%; request pump off.
+At 1 plant-min the candidate is 59.925% versus 60.175% for the baseline;
+the original state remains 60% with its pump on. A paired 120-minute dosing
+forecast measured median 13.57 ms, slowest batch average 14.69 ms (5 batches
+of 5 calls on the local Python 3.9 environment, without real detectors).
+The 24-hour normal-day volume/mass residuals remain below 1e−8 m³/g and the
+level envelope remains within the previously documented range.
