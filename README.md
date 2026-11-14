@@ -11,8 +11,8 @@ HackPrinceton Fall '26 · Business & Enterprise track · working name, change it
 
 ## 1. The pitch in four sentences
 
-In July 2026, attackers hit more than 100 US water systems, mostly small towns whose pump
-controllers (PLCs) were reachable from the internet. CISA's advice was to put a gateway between
+In July 2026, CISA saw attackers going after more than 100 internet-exposed US water
+systems, mostly small towns whose pump controllers (PLCs) were reachable from the internet. CISA's advice was to put a gateway between
 the internet and the PLC. Backflow is that gateway: it reads every command headed for the PLC,
 runs it through a physics model of the plant, and refuses anything that would overflow a tank,
 drain the town's pressure, or overdose chlorine. An AI agent then investigates what happened,
@@ -124,13 +124,18 @@ Scaling: level and temperature ×10, chlorine ×100. All values unsigned 16-bit.
 
 **Coils (read/write)**
 
-| Addr | Name | Meaning |
-|---|---|---|
-| 0 | PUMP_CMD | 1 = run the supply pump (relay 1) |
-| 1 | DOSER_CMD | 1 = run the chlorine doser (relay 2) |
-| 2 | AUTO_MODE | 1 = station controls the pump from level setpoints |
-| 3 | SAFE_MODE | 1 = doser off, pump on local level control, remote writes ignored |
-| 4 | ALARM | 1 = buzzer + red LED |
+| Addr | Name | Default | Meaning |
+|---|---|---|---|
+| 0 | PUMP_CMD | 0 | 1 = run the supply pump (relay 1) |
+| 1 | DOSER_CMD | 1 | 1 = run the chlorine doser (relay 2), only while the pump runs |
+| 2 | AUTO_MODE | 1 | 1 = station controls the pump from level setpoints |
+| 3 | SAFE_MODE | 0 | 1 = doser off, pump on local level control with default setpoints, remote writes to holding 0–4 and coils 0–2 ignored |
+| 4 | ALARM | 0 | 1 = buzzer + red LED |
+
+In `AUTO_MODE` and `SAFE_MODE` the station writes the pump/doser state it chose back into
+`PUMP_CMD` / `DOSER_CMD` (that is its memory between the setpoints). What the relays are
+actually doing is in `PUMP_RUNNING` / `DOSER_RUNNING` below. The doser never runs without
+the pump (no flow, no dose), matching the physics model.
 
 **Discrete inputs (read only)**
 
@@ -140,6 +145,8 @@ Scaling: level and temperature ×10, chlorine ×100. All values unsigned 16-bit.
 | 1 | CABINET_OPEN | photoresistor sees light |
 | 2 | LOCAL_BUTTON | button held (local acknowledge / manual) |
 | 3 | HIGH_LEVEL_SWITCH | IR obstacle module, stands in for a float switch |
+| 4 | PUMP_RUNNING | relay 1 is on (after auto, safe mode and the high-level interlock) |
+| 5 | DOSER_RUNNING | relay 2 is on (`DOSER_CMD` and rate > 0 and pump running and not safe mode) |
 
 **Input registers (read only)**
 
@@ -148,7 +155,7 @@ Scaling: level and temperature ×10, chlorine ×100. All values unsigned 16-bit.
 | 0 | DEMAND_PCT | ×10 | potentiometer, 0–100 % of max town demand |
 | 1 | CABINET_TEMP_C | ×10 | DHT11 |
 | 2 | CABINET_HUMIDITY | ×10 | DHT11 |
-| 10 | LOGIC_HASH | – | CRC16 of holding registers 0–4 |
+| 10 | LOGIC_HASH | – | CRC16/MODBUS (init 0xFFFF) of holding 0–4 as 10 bytes, each register big-endian |
 | 11 | UPTIME_S | – | seconds since boot (wraps) |
 
 **Holding registers (read/write)**
@@ -179,13 +186,17 @@ cmd = Command(kind="register", address=0, value=100)   # doser to max
 
 p = predict(state, cmd, horizon_min=120)
 p.safe            # False
-p.violations      # [Violation(code="CHLORINE_HIGH", minutes_until=11.2,
-                  #            value=4.0, limit=4.0,
-                  #            message="Chlorine passes 4.0 mg/L in about 11 minutes")]
+p.violations      # [Violation(code="CHLORINE_HIGH", minutes_until=<N>,
+                  #            value=4.0, limit=4.0, pre_existing=False,
+                  #            message="Chlorine exceeds 4.0 mg/L in about N plant-minutes")]
 p.trajectory      # [(t_min, level_pct, chlorine_mgl), ...] for the dashboard plot
 
 next_state = step(state, dt_s=1.0)   # used by the twin
 ```
+
+`minutes_until` comes from the parameters in `physics/model.py`; do not quote a number from
+this example. The twin builds its state from `PUMP_RUNNING` / `DOSER_RUNNING` with
+`auto_mode=False`, so the station (not the model) decides the pump.
 
 Violation codes: `TANK_OVERFLOW`, `PRESSURE_LOSS` (tank too low), `CHLORINE_HIGH`,
 `CHLORINE_LOW`, `PUMP_SHORT_CYCLE`, `SETPOINT_OUT_OF_RANGE`.
@@ -221,7 +232,7 @@ Run these only against our own ESP32 or the software station.
 | # | Name | What the script sends | What should happen |
 |---|---|---|---|
 | 0 | Normal day | operator turns pump on, small setpoint change | allowed, relay clicks |
-| 1 | Chlorine overdose | DOSER_RATE_PCT -> 100, DOSER_CMD -> 1 | held, "chlorine > 4 mg/L in N min" |
+| 1 | Chlorine overdose | DOSER_RATE_PCT -> 100, DOSER_CMD -> 1 (run after #0: with the pump off no chlorine reaches the tank) | held, "chlorine > 4 mg/L in N min" |
 | 2 | Drain the town | AUTO_MODE -> 0, PUMP_CMD -> 0 at high demand | held, "pressure loss in N min" |
 | 3 | Overflow | LEVEL_HIGH_SP -> 1000, PUMP_CMD -> 1 | held, "tank overflows in N min" |
 | 4 | Logic tamper | setpoints changed behind the gateway's back | LOGIC_HASH mismatch, agent reverts |
@@ -271,11 +282,13 @@ Add an integration only if it makes the product better.
 
 ## 9. Two-minute demo
 
-1. **0:00–0:20** "In July, attackers hit over 100 US water systems, mostly small towns with one
-   operator and no security team. This is a pump station."
+1. **0:00–0:20** "In July, attackers went after over 100 internet-exposed US water systems,
+   mostly small towns with one operator and no security team. This is a pump station."
 2. **0:20–0:45** Normal command: relay clicks, pump runs, dashboard shows ALLOW.
 3. **0:45–1:15** Attack: doser to max. No click. Dashboard shows the predicted chlorine curve
-   crossing 4 mg/L and the reasons.
+   crossing 4 mg/L and the reasons. Say "4 mg/L is EPA's maximum residual level for
+   chlorine; we use it as our alarm line" (EPA compliance is a running annual average, so
+   never say the attack "breaks the EPA limit").
 4. **1:15–1:40** Operator's phone buzzes with a plain-English text. Reply "block". The incident
    report appears with a timeline.
 5. **1:40–2:00** "One box per station, sold through the integrators who install the PLCs.

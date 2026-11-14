@@ -19,7 +19,7 @@ SIZE = 200  # covers addr 0-11 and the twin registers at 100-101
 INPUTS_PATH = Path(__file__).resolve().parent / "inputs.json"
 BOOT_INPUTS = {"DEMAND_PCT": 400}  # 40 % (README 4.3 example) so the twin's tank moves
 SETTABLE = ("discrete_input", "input_register")
-COMPUTED = ("LOGIC_HASH", "UPTIME_S")  # the station writes these itself
+COMPUTED = ("LOGIC_HASH", "UPTIME_S", "PUMP_RUNNING", "DOSER_RUNNING")  # station-written
 
 
 def _block(regs, kind):
@@ -121,6 +121,10 @@ class Station:
             await self.put("coil", 0, pump)
         if safe and await g("coil", 1):
             await self.put("coil", 1, 0)
+        # actual relays; no flow, no dose
+        doser = pump and not safe and await g("coil", 1) and await g("holding_register", 0) > 0
+        await self.put("discrete_input", 4, pump)
+        await self.put("discrete_input", 5, int(bool(doser)))
         raw = b"".join([(await g("holding_register", a)).to_bytes(2, "big") for a in range(5)])
         await self.put("input_register", 10, crc16(raw))
         await self.put("input_register", 11, int(time.monotonic() - self.t0) & 0xFFFF)

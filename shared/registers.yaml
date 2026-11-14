@@ -9,8 +9,10 @@ ports:
   gateway: 1502       # what remote clients connect to
 
 coils:                # read/write, function codes 1, 5, 15
+  # In AUTO_MODE / SAFE_MODE the station writes its own pump/doser choice back into
+  # PUMP_CMD / DOSER_CMD (its memory between setpoints). Actual relays: PUMP_RUNNING / DOSER_RUNNING.
   PUMP_CMD:   {addr: 0, default: 0, desc: "1 = run supply pump (relay 1)"}
-  DOSER_CMD:  {addr: 1, default: 1, desc: "1 = run chlorine doser (relay 2)"}
+  DOSER_CMD:  {addr: 1, default: 1, desc: "1 = run chlorine doser (relay 2, only while the pump runs)"}
   AUTO_MODE:  {addr: 2, default: 1, desc: "1 = station runs pump from level setpoints"}
   SAFE_MODE:  {addr: 3, default: 0, desc: "1 = doser off, local level control, remote writes ignored"}
   ALARM:      {addr: 4, default: 0, desc: "1 = buzzer + red LED"}
@@ -20,12 +22,14 @@ discrete_inputs:      # read only, function code 2
   CABINET_OPEN:      {addr: 1, desc: "photoresistor sees light"}
   LOCAL_BUTTON:      {addr: 2, desc: "push button held"}
   HIGH_LEVEL_SWITCH: {addr: 3, desc: "IR obstacle module, stands in for a float switch"}
+  PUMP_RUNNING:      {addr: 4, desc: "relay 1 is on: effective pump after auto, safe mode and interlock"}
+  DOSER_RUNNING:     {addr: 5, desc: "relay 2 is on: DOSER_CMD and rate > 0 and pump running and not SAFE_MODE"}
 
 input_registers:      # read only, function code 4
   DEMAND_PCT:       {addr: 0,  scale: 10, desc: "potentiometer, 0-100 % of max demand"}
   CABINET_TEMP_C:   {addr: 1,  scale: 10, desc: "DHT11"}
   CABINET_HUMIDITY: {addr: 2,  scale: 10, desc: "DHT11"}
-  LOGIC_HASH:       {addr: 10, scale: 1,  desc: "CRC16 of holding registers 0-4"}
+  LOGIC_HASH:       {addr: 10, scale: 1,  desc: "CRC16/MODBUS (poly 0xA001, init 0xFFFF) of holding 0-4 as 10 bytes, each register big-endian"}
   UPTIME_S:         {addr: 11, scale: 1,  desc: "seconds since boot, wraps"}
 
 holding_registers:    # read/write, function codes 3, 6, 16

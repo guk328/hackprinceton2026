@@ -111,6 +111,22 @@ def test_high_level_switch_forces_pump_off(port, inputs):
     assert wait_for(lambda: get(port, "coil", 0) == 0)
 
 
+def test_running_inputs_show_actual_relays(port, inputs):
+    assert get(port, "discrete_input", 4) == 0  # boots pump off: doser cannot run
+    assert wait_for(lambda: get(port, "discrete_input", 5) == 0)
+    poke.write("coil", 0, 1, "127.0.0.1", port)
+    assert wait_for(lambda: get(port, "discrete_input", 4) == 1)
+    assert wait_for(lambda: get(port, "discrete_input", 5) == 1)
+    poke.write("holding", 0, 0, "127.0.0.1", port)  # rate 0: doser relay off
+    assert wait_for(lambda: get(port, "discrete_input", 5) == 0)
+    poke.write("holding", 0, 10, "127.0.0.1", port)
+    poke.set_input("HIGH_LEVEL_SWITCH", 1, inputs)  # interlock: both off, PUMP_CMD shows it
+    assert wait_for(lambda: get(port, "discrete_input", 4) == 0)
+    assert get(port, "discrete_input", 5) == 0
+    with pytest.raises(ValueError):
+        poke.set_input("PUMP_RUNNING", 1, inputs)
+
+
 def test_link_keeps_one_connection(port):
     with poke.Link("127.0.0.1", port) as st:
         st.write("holding", 100, 612)
