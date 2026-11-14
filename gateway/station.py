@@ -51,6 +51,7 @@ class StationPoller:
         self.last_good_logic: dict[int, int] = {}  # holding 0-4, moves only via accept_logic
         self._client = AsyncModbusTcpClient(host, port=port, timeout=timeout, retries=0)
         self._task: asyncio.Task | None = None
+        self._lock = asyncio.Lock()
 
     async def start(self):
         self._task = asyncio.create_task(self._loop())
@@ -66,8 +67,9 @@ class StationPoller:
         """Record allowed writes to holding 0-4 as the new last-known-good."""
         self.last_good_logic.update({a: v for a, v in changes.items() if a in LOGIC_ADDRS})
 
-    async def _loop(self):
-        while True:
+    async def refresh(self) -> StationSnapshot:
+        """Poll now (one poll at a time). On failure the old values stay, connected=False."""
+        async with self._lock:
             try:
                 await self.poll_once()
             except asyncio.CancelledError:
@@ -77,6 +79,11 @@ class StationPoller:
                     log.warning("station poll failed: %r", e)
                 self.snapshot = replace(self.snapshot, connected=False)
                 self._client.close()
+            return self.snapshot
+
+    async def _loop(self):
+        while True:
+            await self.refresh()
             await asyncio.sleep(self.interval)
 
     async def poll_once(self):
