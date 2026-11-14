@@ -5,7 +5,10 @@ import sys
 
 
 def run(*cmd):
-    return subprocess.call([sys.executable, *cmd])
+    try:
+        return subprocess.call([sys.executable, *cmd])
+    except KeyboardInterrupt:
+        return 130
 
 
 def not_built(name, step):
@@ -26,7 +29,7 @@ def main():
     if a.cmd == "sim":
         return not_built("sim", 3)
     if a.cmd == "gateway":
-        return not_built("gateway", 15)
+        return run("-m", "gateway.proxy")  # step 15 swaps in gateway.main (+ poller, API)
     if a.cmd == "test":
         return run("-m", "pytest", "-x", "-q", *a.paths)
     return not_built("demo", 28)
