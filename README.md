@@ -288,3 +288,23 @@ Add an integration only if it makes the product better.
 - [ ] Operator channel: Photon, or a simpler fallback
 - [ ] Pump or fan on relay 1 (if we can buy one Saturday)
 - [ ] Who presents
+
+---
+
+## Run it
+
+Windows (PowerShell):
+```
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+Mac:
+```
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Then `python tasks.py --help` (`sim`, `gateway`, `test`, `demo`).

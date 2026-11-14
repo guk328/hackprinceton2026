@@ -7,7 +7,7 @@ design or tricky debugging, **sonnet** = boilerplate.
 
 ## Pinned versions (`requirements.txt`)
 
-Latest on PyPI per `pip index versions`, checked Fri 13 Nov. Not yet installed or tested.
+Latest on PyPI per `pip index versions`, checked Fri 13 Nov. Installed on Python 3.14.3 and import-tested (step 1).
 
 ```
 pymodbus==3.16.2
@@ -26,19 +26,19 @@ pytest-asyncio==1.5.0
 
 - SQLite uses the stdlib `sqlite3` and SSE uses FastAPI's `StreamingResponse`, so neither adds a dependency.
 - This laptop runs Python 3.14.3. If step 1's install fails on a wheel, make the venv with 3.12.
-- Windows has no `make`. Step 1 adds a `Makefile` plus a `tasks.ps1` with the same targets.
+- Windows has no `make`. Step 1 adds `tasks.py` (stdlib argparse, same on Windows and Mac): `python tasks.py sim|gateway|test|demo`.
 
 ## Steps
 
-**Build 1: software station (Fri 11pm milestone)**
-- [ ] **1. Venv, requirements, task runner.** Files: `requirements.txt`, `Makefile`, `tasks.ps1`, `sim/__init__.py`, `gateway/__init__.py`.
-  Proof: `pip install -r requirements.txt` succeeds; `python -c "import pymodbus, deepagents, fastapi"`. Model: sonnet
+**Build 1: software station (Fri 11pm milestone: steps 1-3 done, station running)**
+- [x] **1. Venv, requirements, task runner.** Files: `requirements.txt`, `tasks.py`, `.gitattributes`, `README.md` (Run it), `sim/__init__.py`, `gateway/__init__.py`.
+  Proof: `pip install -r requirements.txt` succeeds; `python -c "import pymodbus, deepagents, fastapi"`; `python tasks.py --help`. Model: sonnet
 - [ ] **2. Register map loader.** Files: `gateway/registers.py`, `gateway/tests/test_registers.py`. Name, scale, min/max and twin-only lookup by (kind, addr).
   Proof: `pytest -x -q gateway/tests/test_registers.py`. Model: sonnet
-- [ ] **3. Software station on 127.0.0.1:5020.** Files: `sim/station.py`. Defaults from the yaml; check the pymodbus 3.16 server examples in site-packages first.
-  Proof: `python -m sim.station` runs and step 4's `poke` reads the defaults. Model: sonnet
-- [ ] **4. `poke` script and station control logic.** Files: `sim/poke.py`, `sim/station.py`, `sim/test_station.py`. Auto pump from setpoints, SAFE_MODE behaviour, LOGIC_HASH (CRC16 of holding 0–4), UPTIME_S.
-  Proof: `python -m sim.poke read all`; `poke write holding 1 900` changes LOGIC_HASH; `pytest -x -q sim`. Model: sonnet
+- [ ] **3. Software station on 127.0.0.1:5020, plus `poke read`.** Files: `sim/station.py`, `sim/poke.py` (read only). Defaults from the yaml; check the pymodbus 3.16 server examples in site-packages first.
+  Proof: `python -m sim.station` runs; `python -m sim.poke read all` prints the yaml defaults. Model: sonnet
+- [ ] **4. `poke write` and station control logic.** Files: `sim/poke.py`, `sim/station.py`, `sim/test_station.py`. Auto pump from setpoints, SAFE_MODE behaviour, LOGIC_HASH (CRC16 of holding 0–4), UPTIME_S.
+  Proof: `poke write holding 1 900` changes LOGIC_HASH; `pytest -x -q sim`. Model: sonnet
 
 **Build 2: transparent proxy (Sat 3am milestone)**
 - [ ] **5. Modbus TCP frame parser.** Files: `gateway/frames.py`, `gateway/tests/test_frames.py`. MBAP + PDU, partial reads, several frames per read, FC 5/6/15/16 decoded to `WriteRequest`s, exception-reply builder.
@@ -101,8 +101,8 @@ pytest-asyncio==1.5.0
 **Build 9: polish (freeze Sun 5am)**
 - [ ] **27. Plant view and predicted curve.** Files: `dashboard/*`, vendored chart library (no CDN, the demo may be offline). Tank bar, chlorine, pump/doser, on-site light, curve crossing the limit line.
   Proof: readable from two metres; scenario 1 shows the curve crossing 4 mg/L. Model: sonnet
-- [ ] **28. Agent activity panel and `make demo`.** Files: `dashboard/*`, `Makefile`, `tasks.ps1`, `gateway/reset.py`. Reset clears the DB, blocklist and held commands and restores defaults.
-  Proof: `make demo` twice in a row gives the same clean run. Model: sonnet
+- [ ] **28. Agent activity panel and `python tasks.py demo`.** Files: `dashboard/*`, `tasks.py`, `gateway/reset.py`. Reset clears the DB, blocklist and held commands and restores defaults.
+  Proof: `python tasks.py demo` twice in a row gives the same clean run. Model: sonnet
 - [ ] **29. Real operator channel (only if we enter Photon).** Files: `gateway/notify.py`. Read Photon's hackathon guide first.
   Proof: a real text arrives and a reply resumes the thread. Model: fable
 
