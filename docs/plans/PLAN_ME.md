@@ -23,11 +23,12 @@ Starting plant parameters and unsourced limits are provisional until the researc
    - Proof: print `safe`, `violations`, `(t_min, level_pct, chlorine_mgl)` trajectory; unchanged input, deterministic output and cmd=None support; mark baseline hazards `pre_existing=True`, retaining earlier/worse command crossings.
    - Verified: 14 physics tests pass; wire mappings checked against YAML; 721 points/rollout at 120 min, median 13.57 ms locally. Baseline attribution is tested with a test-only detector; real detectors remain step 4, so `assessment_complete=False` and `safe=False` until wired in.
 
-4. [ ] **FRIDAY-NIGHT MILESTONE — 90 min.** Goal: CompE imports `PlantState, Command, predict, step` and gets CHLORINE_HIGH and TANK_OVERFLOW.
-   - Files: `physics/limits.py`, `physics/predict.py`, `physics/tests/test_milestone.py`, `docs/research.md` (fixtures).
+4. [x] **FRIDAY-NIGHT MILESTONE — 90 min.** Goal: CompE imports `PlantState, Command, predict, step` and gets CHLORINE_HIGH and TANK_OVERFLOW.
+   - Files: `physics/limits.py`, `physics/predict.py`, `physics/tests/test_milestone.py`, `physics/tests/test_predict.py`, `docs/research.md` (fixtures).
    - Equations/numbers: chlorine >4.0 mg/L; level >95%; overdose fixture: level 40%, C=1 mg/L, manual pump+doser on, demand 40%, rate 10→100%; overflow fixture: manual pump on, level 90%, demand 40%, crossing ≈(5/10.5) h=28.6 min.
    - Proof: passing public-import smoke test, both codes with first-crossing `minutes_until`, value, limit, message, trajectory and safe flag; safe case, baseline flags, malformed input returns unsafe without raising; measure paired forecasts <20 ms locally and give CompE the import/test command.
    - Proof: flag out-of-range numeric settings while preserving their physical forecast; malformed values fail closed. README's 11.2 min is illustrative; at 60% level, overflow needs ≈200 min, outside the default horizon.
+   - Verified: 21 physics tests pass; overdose fixture crosses at 80.667 min, overflow at 28.667 min; safe/garbage/baseline cases pass; 40 individual paired forecasts median 14.01 ms, max 14.79 ms locally. Scope is explicit via `checked_limits`; remaining physical limits are step 5. CompE handoff command is in research.md.
 
 5. [ ] **Remaining limits — 60 min.** Goal: complete all six codes and auto/safe control semantics.
    - Files: `physics/limits.py`, `physics/model.py`, `physics/predict.py`, `docs/research.md`.

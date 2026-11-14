@@ -1,11 +1,9 @@
-"""Command/rollout contract checks; real physical detectors arrive in step 4."""
+"""Command/rollout contract checks using the implemented physical detectors."""
 
 from dataclasses import replace
-from importlib import import_module
 from pathlib import Path
 import re
 import unittest
-from unittest.mock import patch
 
 from physics import Command, PlantState, Violation, predict, step
 from physics.predict import _apply_command, _attribute_violations
@@ -31,8 +29,8 @@ class ForecastTests(unittest.TestCase):
                 self.assertEqual(result.trajectory[0], (0, 60, 1))
                 self.assertEqual(result.trajectory[-1][0], horizon)
                 self.assertEqual(result.violations, [])
-                self.assertFalse(result.safe)
-                self.assertFalse(result.assessment_complete)
+                self.assertTrue(result.safe)
+                self.assertTrue(result.assessment_complete)
 
     def test_wire_mapping_and_units_match_shared_yaml(self):
         contract = (Path(__file__).resolve().parents[2] / "shared" / "registers.yaml").read_text()
@@ -113,19 +111,13 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(attributed.baseline_minutes_until, 60)
         self.assertFalse(_attribute_violations([candidate], [])[0].pre_existing)
 
-    def test_rollout_retains_first_crossing_with_a_test_only_detector(self):
-        def detector(state, t_min):
-            if state.chlorine_mgl > 4:
-                return [Violation("CHLORINE_HIGH", t_min, state.chlorine_mgl, 4, "Test-only threshold")]
-            return []
-
-        with patch.object(import_module("physics.predict"), "_check_limits", side_effect=detector):
-            existing = predict(PlantState(chlorine_mgl=5), None, horizon_min=1)
-            self.assertEqual(len(existing.violations), 1)
-            self.assertEqual(existing.violations[0].minutes_until, 0)
-            self.assertTrue(existing.violations[0].pre_existing)
-            state = PlantState(level_pct=40, auto_mode=False)
-            caused = predict(state, Command("register", 0, 100))
-            self.assertEqual(len(caused.violations), 1)
-            self.assertGreater(caused.violations[0].minutes_until, 0)
-            self.assertFalse(caused.violations[0].pre_existing)
+    def test_rollout_retains_first_crossing_and_baseline_attribution(self):
+        existing = predict(PlantState(chlorine_mgl=5), None, horizon_min=1)
+        self.assertEqual(len(existing.violations), 1)
+        self.assertEqual(existing.violations[0].minutes_until, 0)
+        self.assertTrue(existing.violations[0].pre_existing)
+        state = PlantState(level_pct=40, auto_mode=False)
+        caused = predict(state, Command("register", 0, 100))
+        self.assertEqual(len(caused.violations), 1)
+        self.assertGreater(caused.violations[0].minutes_until, 0)
+        self.assertFalse(caused.violations[0].pre_existing)
