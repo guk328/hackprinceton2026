@@ -121,3 +121,154 @@ class ForecastTests(unittest.TestCase):
         self.assertEqual(len(caused.violations), 1)
         self.assertGreater(caused.violations[0].minutes_until, 0)
         self.assertFalse(caused.violations[0].pre_existing)
+
+
+class FullContractTests(unittest.TestCase):
+    def violation(self, state, command, code, horizon=120):
+        result = predict(state, command, horizon_min=horizon)
+        self.assertTrue(result.assessment_complete)
+        self.assertFalse(result.safe)
+        matches = [v for v in result.violations if v.code == code]
+        self.assertEqual(len(matches), 1)
+        self.assertTrue(matches[0].message)
+        return matches[0]
+
+    def test_chlorine_high(self):
+        v = self.violation(PlantState(level_pct=40, auto_mode=False),
+                           Command("register", 0, 100), "CHLORINE_HIGH")
+        self.assertGreater(v.value, 4)
+        self.assertAlmostEqual(v.minutes_until, 80.6666667, places=5)
+        self.assertFalse(v.pre_existing)
+
+    def test_tank_overflow(self):
+        v = self.violation(PlantState(level_pct=90, auto_mode=False, pump_on=False),
+                           Command("coil", 0, 1), "TANK_OVERFLOW")
+        self.assertGreater(v.value, 95)
+        self.assertLessEqual(abs(v.minutes_until - (95 - 90) / 10.5 * 60), 10 / 60)
+        self.assertFalse(v.pre_existing)
+
+    def test_chlorine_low_matches_analytical_decay(self):
+        # No inflow/outflow/dose: C(t) = C0 exp(-0.05 t_h).
+        from math import log
+        state = PlantState(chlorine_mgl=0.21, pump_on=False, auto_mode=False,
+                           doser_on=False, demand_pct=0)
+        v = self.violation(state, None, "CHLORINE_LOW")
+        self.assertLess(v.value, 0.2)
+        self.assertLessEqual(abs(v.minutes_until - log(0.21 / 0.2) / 0.05 * 60), 10 / 60)
+        self.assertTrue(v.pre_existing)
+
+    def test_pressure_loss_matches_analytical_drain(self):
+        state = PlantState(level_pct=16, demand_pct=100, auto_mode=False)
+        v = self.violation(state, Command("coil", 0, 0), "PRESSURE_LOSS")
+        self.assertLess(v.value, 15)
+        self.assertLessEqual(abs(v.minutes_until - (16 - 15) / 11.25 * 60), 10 / 60)
+        self.assertFalse(v.pre_existing)
+
+    def test_seventh_manual_start_is_immediate_and_does_not_mutate_history(self):
+        state = PlantState(auto_mode=False, pump_on=False, elapsed_s=3600,
+                           pump_start_times_s=(1, 100, 200, 300, 400, 500))
+        before = replace(state)
+        command = Command("coil", 0, 1)
+        result = predict(state, command)
+        v = self.violation(state, command, "PUMP_SHORT_CYCLE")
+        self.assertEqual((v.minutes_until, v.value, v.limit), (0, 7, 6))
+        self.assertFalse(v.pre_existing)
+        self.assertEqual(state, before)
+        self.assertEqual(predict(state, command), result)
+
+    def test_local_start_is_not_hidden_when_old_start_expires_during_step(self):
+        state = PlantState(level_pct=39, pump_on=False, elapsed_s=3600,
+                           pump_start_times_s=(1, 100, 200, 300, 400, 500))
+        v = self.violation(state, None, "PUMP_SHORT_CYCLE", horizon=1)
+        self.assertEqual((v.minutes_until, v.value), (0, 7))
+        self.assertTrue(v.pre_existing)
+
+    def test_setpoint_out_of_range_and_equal_pair(self):
+        for command in (Command("register", 1, 499), Command("register", 2, 701),
+                        Command("register", 3, 19), Command("register", 3, 401)):
+            with self.subTest(command=command):
+                v = self.violation(PlantState(), command, "SETPOINT_OUT_OF_RANGE", horizon=0)
+                self.assertEqual(v.minutes_until, 0)
+                self.assertFalse(v.pre_existing)
+        self.violation(PlantState(level_low_sp=60, level_high_sp=60), None,
+                       "SETPOINT_OUT_OF_RANGE", horizon=0)
+
+    def test_safe_command_assesses_all_six_codes(self):
+        result = predict(PlantState(), Command("register", 1, 840))
+        self.assertTrue(result.safe)
+        self.assertTrue(result.assessment_complete)
+        self.assertEqual(result.violations, [])
+        self.assertEqual(set(result.checked_limits), {
+            "CHLORINE_HIGH", "CHLORINE_LOW", "TANK_OVERFLOW", "PRESSURE_LOSS",
+            "PUMP_SHORT_CYCLE", "SETPOINT_OUT_OF_RANGE",
+        })
+
+    def test_strict_limits_allow_exact_equality(self):
+        for level, chlorine in ((15, 0.2), (95, 4)):
+            state = PlantState(level_pct=level, chlorine_mgl=chlorine,
+                               elapsed_s=3600, pump_start_times_s=(1, 100, 200, 300, 400, 500))
+            result = predict(state, None, horizon_min=0)
+            self.assertTrue(result.assessment_complete)
+            self.assertTrue(result.safe)
+
+    def test_missing_cycle_history_preserves_old_constructor(self):
+        state = PlantState(pump_on=False, auto_mode=False)
+        result = predict(state, Command("coil", 0, 1), horizon_min=1)
+        self.assertTrue(result.safe)
+        self.assertEqual(state.pump_start_times_s, ())
+        self.assertEqual(state.elapsed_s, 0)
+
+    def test_garbage_and_nonfinite_values_fail_closed_with_json_safe_output(self):
+        from dataclasses import asdict
+        import json
+        fields = ("level_pct", "chlorine_mgl", "demand_pct", "doser_rate_pct",
+                  "level_high_sp", "level_low_sp", "chlorine_target_mgl", "elapsed_s")
+        for field in fields:
+            for value in (float("nan"), float("inf"), -float("inf"), "bad", None, True):
+                with self.subTest(field=field, value=value):
+                    result = predict(replace(PlantState(), **{field: value}), None)
+                    self.assertFalse(result.safe)
+                    self.assertFalse(result.assessment_complete)
+                    self.assertEqual(result.trajectory, [])
+                    json.dumps(asdict(result), allow_nan=False)
+        for history in (None, [], (float("nan"),), (1,), (-1, -2)):
+            with self.subTest(history=history):
+                result = predict(replace(PlantState(), pump_start_times_s=history), None)
+                self.assertFalse(result.safe)
+                self.assertFalse(result.assessment_complete)
+
+    def test_dry_tank_reports_hazards_without_nonfinite_predictions(self):
+        from dataclasses import asdict
+        import json
+        state = PlantState(level_pct=0, pump_on=False, auto_mode=False)
+        result = predict(state, None, horizon_min=1)
+        self.assertTrue(result.assessment_complete)
+        self.assertEqual({v.code for v in result.violations}, {"PRESSURE_LOSS", "CHLORINE_LOW"})
+        self.assertTrue(all(point[1] == 0 for point in result.trajectory))
+        json.dumps(asdict(result), allow_nan=False)
+
+    def test_ten_and_five_second_crossings_agree_within_one_plant_minute(self):
+        # Independent fine-step reference: uses public step(), direct strict
+        # comparisons, and no predictor detector/rollout implementation.
+        cases = (
+            (PlantState(level_pct=40, auto_mode=False, doser_rate_pct=100),
+             "CHLORINE_HIGH", "chlorine_mgl", 4, True),
+            (PlantState(level_pct=90, auto_mode=False),
+             "TANK_OVERFLOW", "level_pct", 95, True),
+            (PlantState(chlorine_mgl=0.21, auto_mode=False, pump_on=False, demand_pct=0),
+             "CHLORINE_LOW", "chlorine_mgl", 0.2, False),
+            (PlantState(level_pct=16, auto_mode=False, pump_on=False, demand_pct=100),
+             "PRESSURE_LOSS", "level_pct", 15, False),
+        )
+        for initial, code, field, limit, above in cases:
+            with self.subTest(code=code):
+                coarse = self.violation(initial, None, code)
+                fine = initial
+                for elapsed_s in range(0, 7201, 5):
+                    value = getattr(fine, field)
+                    if (value > limit) if above else (value < limit):
+                        break
+                    fine = step(fine, dt_s=5)
+                else:
+                    self.fail("Fine-step reference did not cross " + code)
+                self.assertLessEqual(abs(coarse.minutes_until - elapsed_s / 60), 1)

@@ -58,3 +58,40 @@ class ModelTests(unittest.TestCase):
         for dt_s in (-1, float("nan"), float("inf")):
             with self.subTest(dt_s=dt_s), self.assertRaises(ValueError):
                 step(PlantState(), dt_s=dt_s)
+
+
+    def test_safe_mode_uses_local_hysteresis_and_suppresses_dosing(self):
+        for level, previous, expected in ((39, False, True), (86, True, False),
+                                          (40, False, False), (85, True, True),
+                                          (60, False, False), (60, True, True)):
+            with self.subTest(level=level, previous=previous):
+                state = PlantState(level_pct=level, pump_on=previous, safe_mode=True,
+                                   auto_mode=False, level_low_sp=5, level_high_sp=10,
+                                   doser_rate_pct=100)
+                result = step(state)
+                self.assertEqual(result.pump_on, expected)
+                self.assertFalse(result.doser_on)
+                self.assertEqual(result.chlorine_mgl,
+                                 step(replace(state, doser_on=False)).chlorine_mgl)
+
+    def test_plant_clock_and_history_follow_actual_local_transitions(self):
+        initial = PlantState(level_pct=39, pump_on=False, elapsed_s=3600,
+                             pump_start_times_s=(0, 1, 100))
+        snapshot = replace(initial)
+        started = step(initial, dt_s=5)
+        self.assertEqual(started.elapsed_s, 3605)
+        self.assertEqual(started.pump_start_times_s, (100, 3600))
+        running = step(started, dt_s=5)
+        self.assertEqual(running.pump_start_times_s, started.pump_start_times_s)
+        stopped = step(replace(running, level_pct=86), dt_s=5)
+        self.assertFalse(stopped.pump_on)
+        self.assertEqual(stopped.pump_start_times_s, started.pump_start_times_s)
+        self.assertEqual(initial, snapshot)
+        self.assertEqual(step(initial, dt_s=0), initial)
+
+    def test_nonfinite_physical_state_is_rejected_by_step(self):
+        for field in ("level_pct", "chlorine_mgl", "demand_pct", "doser_rate_pct",
+                      "level_high_sp", "level_low_sp", "elapsed_s"):
+            for value in (float("nan"), float("inf"), -float("inf")):
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    step(replace(PlantState(), **{field: value}))
