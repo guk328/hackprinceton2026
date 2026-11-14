@@ -41,7 +41,7 @@ pytest-asyncio==1.5.0
   Proof: `poke write holding 1 900` changes LOGIC_HASH; `pytest -x -q sim`. Model: sonnet
 
 **Build 2: transparent proxy (Sat 3am milestone)**
-- [ ] **5. Modbus TCP frame parser.** Files: `gateway/frames.py`, `gateway/tests/test_frames.py`. MBAP + PDU, partial reads, several frames per read, FC 5/6/15/16 decoded to `WriteRequest`s, exception-reply builder.
+- [x] **5. Modbus TCP frame parser.** Files: `gateway/frames.py`, `gateway/tests/test_frames.py`. MBAP + PDU, partial reads, several frames per read, FC 5/6/15/16 decoded to `WriteRequest`s, exception-reply builder.
   Proof: `pytest -x -q gateway/tests/test_frames.py` round-trips FC 1–6, 15, 16 and rejects truncated frames. Model: fable
 - [ ] **6. Asyncio proxy, transparent mode.** Files: `gateway/proxy.py`, `gateway/tests/test_proxy.py`. Listens on :1502, forwards everything to `STATION_HOST:STATION_PORT`, logs each frame.
   Proof: `poke --port 1502 read all` matches direct reads; a write through the proxy lands on the station. Model: fable
