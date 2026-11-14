@@ -17,10 +17,11 @@ Starting plant parameters and unsourced limits are provisional until the researc
    - Proof: labeled time [h], level [%], chlorine [mg/L] and pump-state plot plus printed mass-balance error; do not assume 10% dose holds 1 mg/L. Check installed matplotlib; request approval if missing.
    - Verified: existing workspace matplotlib 3.9.4 used, no installation; plot inspected; level 40–85.025%, chlorine 0.518907–1 mg/L; water/mass residuals <1e−8 m³/g; analytical slopes, first stop and pump-off decay checks passed.
 
-3. [ ] **Command and baseline rollouts — 60 min.** Goal: implement pure `predict(state, cmd, horizon_min=120)` with copied state.
-   - Files: `physics/__init__.py`, `physics/predict.py`, `physics/model.py`.
+3. [x] **Command and baseline rollouts — 60 min.** Goal: implement pure `predict(state, cmd, horizon_min=120)` with copied state.
+   - Files: `physics/__init__.py`, `physics/predict.py`, `physics/model.py`, `physics/tests/test_predict.py`, `docs/research.md`.
    - Equations/numbers: 120 min / 10 s =720 integration steps per rollout; run candidate and cmd=None baseline; map coils 0–4/holding 0–4, setpoints ÷10 [%], target ÷100 [mg/L], rate ÷1 [%].
    - Proof: print `safe`, `violations`, `(t_min, level_pct, chlorine_mgl)` trajectory; unchanged input, deterministic output and cmd=None support; mark baseline hazards `pre_existing=True`, retaining earlier/worse command crossings.
+   - Verified: 14 physics tests pass; wire mappings checked against YAML; 721 points/rollout at 120 min, median 13.57 ms locally. Baseline attribution is tested with a test-only detector; real detectors remain step 4, so `assessment_complete=False` and `safe=False` until wired in.
 
 4. [ ] **FRIDAY-NIGHT MILESTONE — 90 min.** Goal: CompE imports `PlantState, Command, predict, step` and gets CHLORINE_HIGH and TANK_OVERFLOW.
    - Files: `physics/limits.py`, `physics/predict.py`, `physics/tests/test_milestone.py`, `docs/research.md` (fixtures).
