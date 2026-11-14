@@ -4,6 +4,7 @@ Every check runs and every reason is kept; the strictest verdict wins (DENY > HO
 """
 from dataclasses import dataclass, field
 
+from gateway import physics_client
 from gateway.frames import WriteRequest
 from gateway.registers import Register, RegisterMap, load_registers
 from gateway.station import StationSnapshot
@@ -49,7 +50,29 @@ def check_safe_mode_clear(req: WriteRequest, reg: Register | None, station: Stat
     return ALLOW, []
 
 
-CHECKS = [check_known, check_envelope, check_safe_mode_clear]
+def check_physics(req: WriteRequest, reg: Register | None, station: StationSnapshot):
+    """Any predicted violation the write would cause is a HOLD. So is not knowing."""
+    if reg is None or reg.twin_only:
+        return ALLOW, []  # already denied, and the model has no such register
+    try:
+        state = physics_client.plant_state(station)
+    except Exception as e:
+        return HOLD, [f"station state unknown: {e}"]
+    try:
+        p = physics_client.check(
+            state, physics_client.Command(kind=req.kind, address=req.address, value=req.value))
+        new = [v for v in p.violations if not v.pre_existing]
+        reasons = [f"{v.code} in {round(v.minutes_until)} min" for v in new]
+        if not p.safe and not p.violations:
+            reasons = ["physics check gave no verdict"]
+    except TimeoutError:
+        return HOLD, ["physics check timed out"]
+    except Exception as e:
+        return HOLD, [f"physics check failed: {e!r}"]
+    return (HOLD if reasons else ALLOW), reasons, p
+
+
+CHECKS = [check_known, check_envelope, check_safe_mode_clear, check_physics]
 
 
 def decide(req: WriteRequest, station: StationSnapshot, *,
@@ -62,13 +85,15 @@ def decide(req: WriteRequest, station: StationSnapshot, *,
     if reg is not None and reg.kind == "coil" and reg.name in ALWAYS_SETTABLE and req.value == 1:
         return Decision(ALLOW)
 
-    verdict, reasons = ALLOW, []
+    verdict, reasons, prediction = ALLOW, [], None
     for check in CHECKS:  # no early exit: collect every reason
         try:
-            v, why = check(req, reg, station)
+            v, why, *extra = check(req, reg, station)
         except Exception as e:  # a broken check must not become permission
-            v, why = HOLD, [f"{getattr(check, '__name__', 'check')} failed: {e!r}"]
+            v, why, extra = HOLD, [f"{getattr(check, '__name__', 'check')} failed: {e!r}"], []
         reasons += why
+        if extra:
+            prediction = extra[0]
         if _RANK[v] > _RANK[verdict]:
             verdict = v
-    return Decision(verdict, reasons)
+    return Decision(verdict, reasons, prediction)

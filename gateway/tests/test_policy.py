@@ -54,7 +54,8 @@ def test_outside_envelope_is_held(addr, value, word):
 
 @pytest.mark.parametrize("addr,value", [(0, 0), (0, 100), (1, 500), (1, 950), (3, 20), (3, 400)])
 def test_envelope_bounds_are_inclusive(addr, value):
-    assert not any("max" in r or "min" in r for r in decide(reg(addr, value), snap()).reasons)
+    reasons = decide(reg(addr, value), snap()).reasons
+    assert not any("above max" in r or "below min" in r for r in reasons)
 
 
 def test_register_without_envelope_is_allowed():
@@ -93,14 +94,14 @@ def test_ordinary_coil_write_is_allowed():
 
 
 def test_every_reason_is_collected(monkeypatch):
-    """Two failing checks give two reasons: decide() does not stop at the first."""
+    """Every failing check adds its reason: decide() does not stop at the first."""
     import gateway.policy as policy
-    extra = lambda req, reg, station: (HOLD, ["second check"])
+    extra = lambda req, reg, station: (HOLD, ["last check"])
     monkeypatch.setattr(policy, "CHECKS", [*policy.CHECKS, extra])
     d = decide(reg(0, 500), snap())
     assert d.decision == HOLD
-    assert len(d.reasons) == 2 and "second check" in d.reasons
-    assert any("above" in r for r in d.reasons)
+    assert len(d.reasons) == 3 and d.reasons[-1] == "last check"
+    assert "above max" in d.reasons[0] and d.reasons[1].startswith("CHLORINE_HIGH")
 
 
 def test_deny_outranks_hold_and_keeps_both_reasons(monkeypatch):
