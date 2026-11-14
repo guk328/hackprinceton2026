@@ -1,0 +1,2 @@
+# Optional plotting only; the physics model uses the Python standard library.
+matplotlib==3.9.4
