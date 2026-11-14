@@ -27,7 +27,7 @@ def main():
     a = p.parse_args()
 
     if a.cmd == "sim":
-        return not_built("sim", 3)
+        return run("-m", "sim.station")
     if a.cmd == "gateway":
         return run("-m", "gateway.proxy")  # step 15 swaps in gateway.main (+ poller, API)
     if a.cmd == "test":
