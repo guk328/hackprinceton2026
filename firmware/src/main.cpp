@@ -1,10 +1,11 @@
-// Backflow station firmware. Steps 1-2: Wi-Fi + OLED, Modbus TCP server with the register map.
+// Backflow station firmware. Steps 1-3: Wi-Fi + OLED, Modbus TCP server, relays follow coils 0/1.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <ModbusIP_ESP8266.h>
+#include <driver/gpio.h>  // gpio_set_level: preset the relay pins before they become outputs
 
 #include "secrets.h"  // WIFI_SSID, WIFI_PASS (git-ignored, see secrets.h.example)
 
@@ -12,6 +13,11 @@
 const uint8_t PIN_SDA = 21;
 const uint8_t PIN_SCL = 22;
 const uint8_t PIN_LED = LED_BUILTIN;  // GPIO 2, on-board blue LED
+const uint8_t PIN_RELAY1 = 26;        // D26 -> relay IN1 (pump)
+const uint8_t PIN_RELAY2 = 27;        // D27 -> relay IN2 (doser)
+
+// Relay module is active LOW (tested: releases cleanly at 3.3 V with VCC = 5 V, JD-VCC cap on).
+const uint8_t RELAY_ON = LOW, RELAY_OFF = HIGH;
 
 
 // ---- Modbus register map (mirror of shared/registers.yaml; do not invent addresses) ----
@@ -72,6 +78,40 @@ void modbusDefine() {
   mb.addHreg(HR_CHLORINE_MGL, 100);
 }
 
+// Relays off with no glitch. Before this runs the pins float (reset state), which is also "off"
+// for an active-LOW module. Order matters: put HIGH in the output latch first, then enable the
+// output driver, so the pin never drives LOW. (digitalWrite before pinMode is ignored by
+// Arduino-ESP32 3.x, hence the IDF call.)
+void relaysOffAtBoot() {
+  gpio_set_level((gpio_num_t)PIN_RELAY1, RELAY_OFF);
+  gpio_set_level((gpio_num_t)PIN_RELAY2, RELAY_OFF);
+  pinMode(PIN_RELAY1, OUTPUT);
+  pinMode(PIN_RELAY2, OUTPUT);
+  digitalWrite(PIN_RELAY1, RELAY_OFF);
+  digitalWrite(PIN_RELAY2, RELAY_OFF);
+}
+
+// Step 3: relay 1 follows PUMP_CMD, relay 2 follows DOSER_CMD while the pump is on (plain
+// writes; auto mode, safe mode, interlock and the rate > 0 rule are step 5). PUMP_RUNNING / DOSER_RUNNING report exactly what the pins are doing.
+void relaysApply() {
+  static bool pump = false, doser = false;
+  // DOSER_CMD defaults to 1, so the "only while the pump runs" rule from the contract is applied
+  // already: without it relay 2 would click on at every boot.
+  bool wantPump = mb.Coil(C_PUMP_CMD), wantDoser = mb.Coil(C_DOSER_CMD) && wantPump;
+  if (wantPump != pump) {
+    pump = wantPump;
+    digitalWrite(PIN_RELAY1, pump ? RELAY_ON : RELAY_OFF);
+    Serial.printf("relay 1 (pump) %s\n", pump ? "ON" : "OFF");
+  }
+  if (wantDoser != doser) {
+    doser = wantDoser;
+    digitalWrite(PIN_RELAY2, doser ? RELAY_ON : RELAY_OFF);
+    Serial.printf("relay 2 (doser) %s\n", doser ? "ON" : "OFF");
+  }
+  mb.Ists(DI_PUMP_RUNNING, pump);
+  mb.Ists(DI_DOSER_RUNNING, doser);
+}
+
 // Called every loop: derived read-only registers.
 void modbusUpdate() {
   mb.Ireg(IR_LOGIC_HASH, logicHash());
@@ -118,6 +158,7 @@ void drawScreen() {
 }
 
 void setup() {
+  relaysOffAtBoot();  // first thing, before serial, OLED or Wi-Fi
   Serial.begin(115200);
   pinMode(PIN_LED, OUTPUT);
   Serial.println("\nBackflow station, step 1");
@@ -183,6 +224,7 @@ void loop() {
   }
 
   if (mbStarted) mb.task();  // non-blocking; returns after at most ~100 ms of work
+  relaysApply();             // right after task(), so a coil write reaches the pin in the same loop
   modbusUpdate();            // every loop, so LOGIC_HASH never lags a write
 
   if (now - tScreen >= 1000) {
