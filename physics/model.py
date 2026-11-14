@@ -24,6 +24,10 @@ class PlantState:
     level_high_sp: float = 85.0
     level_low_sp: float = 40.0
     auto_mode: bool = True
+    safe_mode: bool = False
+    alarm: bool = False
+    chlorine_target_mgl: float = 1.0
+    logic_version: int = 1
 
 
 @dataclass(frozen=True)
@@ -59,11 +63,16 @@ def step(state: PlantState, dt_s: float = 1.0) -> PlantState:
         return replace(state)
 
     pump_on = state.pump_on
-    if state.auto_mode:
-        if state.level_pct < state.level_low_sp:
+    if state.auto_mode or state.safe_mode:
+        # SAFE_MODE uses the local defaults, independent of remote setpoints.
+        low_sp = 40.0 if state.safe_mode else state.level_low_sp
+        high_sp = 85.0 if state.safe_mode else state.level_high_sp
+        if state.level_pct < low_sp:
             pump_on = True
-        elif state.level_pct > state.level_high_sp:
+        elif state.level_pct > high_sp:
             pump_on = False
+
+    doser_on = state.doser_on and not state.safe_mode
 
     dt_h = dt_s / 3600.0
     volume_m3 = state.level_pct / 100.0 * TANK_CAPACITY_M3
@@ -75,12 +84,16 @@ def step(state: PlantState, dt_s: float = 1.0) -> PlantState:
     mass_g = volume_m3 * concentration_g_m3
     dose_g_h = (
         MAX_DOSE_G_H * state.doser_rate_pct / 100.0
-        if pump_on and state.doser_on else 0.0
+        if pump_on and doser_on else 0.0
     )
-    next_volume_m3 = max(0.0, volume_m3 + (inflow_m3_h - outflow_m3_h) * dt_h)
-    next_mass_g = max(0.0, mass_g + (
+    next_volume_m3 = volume_m3 + (inflow_m3_h - outflow_m3_h) * dt_h
+    next_mass_g = mass_g + (
         dose_g_h - outflow_m3_h * concentration_g_m3 - DECAY_PER_H * mass_g
-    ) * dt_h)
+    ) * dt_h
+    if not isfinite(next_volume_m3) or not isfinite(next_mass_g):
+        raise ValueError("volume [m³] or chlorine mass [g] overflowed")
+    next_volume_m3 = max(0.0, next_volume_m3)
+    next_mass_g = max(0.0, next_mass_g)
     # A dry tank retains no dissolved mass and has no concentration to divide by.
     next_chlorine_mgl = next_mass_g / next_volume_m3 if next_volume_m3 > 0 else 0.0
     return replace(
@@ -88,4 +101,5 @@ def step(state: PlantState, dt_s: float = 1.0) -> PlantState:
         level_pct=next_volume_m3 / TANK_CAPACITY_M3 * 100.0,
         chlorine_mgl=next_chlorine_mgl,
         pump_on=pump_on,
+        doser_on=doser_on,
     )
