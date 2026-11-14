@@ -100,7 +100,7 @@ def test_every_reason_is_collected(monkeypatch):
     monkeypatch.setattr(policy, "CHECKS", [*policy.CHECKS, extra])
     d = decide(reg(0, 500), snap())
     assert d.decision == HOLD
-    assert len(d.reasons) == 3 and d.reasons[-1] == "last check"
+    assert "last check" in d.reasons and len(d.reasons) == 3 + 2  # + 2 context reasons
     assert "above max" in d.reasons[0] and d.reasons[1].startswith("CHLORINE_HIGH")
 
 
@@ -110,4 +110,60 @@ def test_deny_outranks_hold_and_keeps_both_reasons(monkeypatch):
     monkeypatch.setattr(policy, "CHECKS", [*policy.CHECKS, extra])
     d = decide(reg(100, 500), snap())
     assert d.decision == DENY
-    assert "held too" in d.reasons and len(d.reasons) == 2
+    assert "held too" in d.reasons and len(d.reasons) == 2 + 2  # + 2 context reasons
+
+
+# ---- step 11: context checks -------------------------------------------------------------
+
+import gateway.policy as policy  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def fresh_context(monkeypatch):
+    """Each test starts with an empty source history and a daytime demo clock."""
+    policy.reset_context()
+    monkeypatch.setenv("DEMO_CLOCK", "14:00")
+
+
+def held(src=SRC, value=500, **snap_over):
+    r = REGS.lookup("holding_register", 0)
+    return decide(WriteRequest(src, 6, "register", 0, value, r.name), snap(**snap_over))
+
+
+def test_new_source_is_a_reason_then_seen():
+    assert "source not seen before" in held().reasons
+    assert "source not seen before" not in held().reasons
+
+
+def test_context_never_holds_a_clean_write():
+    d = decide(reg(1, 800), snap(discrete_inputs={"PRESENCE": 0, "CABINET_OPEN": 0}))
+    assert d.decision == ALLOW and d.reasons == []
+
+
+def test_nobody_on_site_vs_presence_or_cabinet():
+    assert "nobody on site" in held().reasons
+    di = {"PRESENCE": 1, "CABINET_OPEN": 0}
+    assert "nobody on site" not in held(discrete_inputs=di).reasons
+    di = {"PRESENCE": 0, "CABINET_OPEN": 1}
+    assert "nobody on site" not in held(discrete_inputs=di).reasons
+
+
+def test_demo_clock_controls_time_of_day(monkeypatch):
+    monkeypatch.setenv("DEMO_CLOCK", "03:00")
+    assert any("03:00" in r and "outside" in r for r in held().reasons)
+    monkeypatch.setenv("DEMO_CLOCK", "14:00")
+    assert not any("outside" in r for r in held().reasons)
+    monkeypatch.setenv("DEMO_CLOCK", "2026-11-14T03:12:09")  # full timestamp also accepted
+    assert any("outside" in r for r in held().reasons)
+
+
+def test_bad_demo_clock_falls_back_to_real_time(monkeypatch):
+    monkeypatch.setenv("DEMO_CLOCK", "banana")
+    assert held().decision == HOLD  # no crash
+
+
+def test_write_rate_per_source():
+    for _ in range(policy.RATE_MAX):
+        held()
+    assert any("writes in" in r for r in held().reasons)
+    assert not any("writes in" in r for r in held(src="198.51.100.9").reasons)

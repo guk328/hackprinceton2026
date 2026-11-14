@@ -2,7 +2,11 @@
 
 Every check runs and every reason is kept; the strictest verdict wins (DENY > HOLD > ALLOW).
 """
+import os
+import time
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from gateway import physics_client
 from gateway.frames import WriteRequest
@@ -15,6 +19,53 @@ _REG_KIND = {"coil": "coil", "register": "holding_register"}
 ALWAYS_SETTABLE = ("SAFE_MODE", "ALARM")  # setting these to 1 only makes the plant safer
 
 _regs: RegisterMap | None = None
+
+# Context (who, when, how often). It explains a HOLD/DENY; it never makes a clean write held.
+RATE_WINDOW_S, RATE_MAX = 10.0, 5   # more than RATE_MAX writes in the window is a burst
+DAY_START_H, DAY_END_H = 6, 22      # expected operating hours, local time
+_seen: set[str] = set()
+_recent: dict[str, deque] = defaultdict(deque)
+
+
+def reset_context() -> None:
+    _seen.clear()
+    _recent.clear()
+
+
+def now() -> datetime:
+    """Wall clock, unless DEMO_CLOCK ("HH:MM" or ISO timestamp) overrides it (demo: 3 am story)."""
+    raw = os.environ.get("DEMO_CLOCK", "").strip()
+    if raw:
+        try:
+            if ":" in raw and "T" not in raw and "-" not in raw:
+                h, m = raw.split(":")[:2]
+                return datetime.now().replace(hour=int(h), minute=int(m), second=0, microsecond=0)
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            pass  # bad setting: use the real clock rather than crash
+    return datetime.now()
+
+
+def context_reasons(req: WriteRequest, station: StationSnapshot) -> list[str]:
+    reasons = []
+    first = req.src_ip not in _seen
+    _seen.add(req.src_ip)
+    if first:
+        reasons.append("source not seen before")
+    t = time.monotonic()
+    q = _recent[req.src_ip]
+    q.append(t)
+    while q and t - q[0] > RATE_WINDOW_S:
+        q.popleft()
+    if len(q) > RATE_MAX:
+        reasons.append(f"{len(q)} writes in {RATE_WINDOW_S:g} s from this source")
+    hour = now()
+    if not DAY_START_H <= hour.hour < DAY_END_H:
+        reasons.append(f"{hour:%H:%M} is outside operating hours")
+    di = station.discrete_inputs
+    if not di.get("PRESENCE") and not di.get("CABINET_OPEN"):
+        reasons.append("nobody on site")
+    return reasons
 
 
 @dataclass(frozen=True)
@@ -96,4 +147,7 @@ def decide(req: WriteRequest, station: StationSnapshot, *,
             prediction = extra[0]
         if _RANK[v] > _RANK[verdict]:
             verdict = v
+    ctx = context_reasons(req, station)
+    if verdict != ALLOW:
+        reasons += ctx
     return Decision(verdict, reasons, prediction)

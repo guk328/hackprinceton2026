@@ -141,7 +141,8 @@ def test_only_new_violations_become_reasons(monkeypatch):
     p = Prediction(safe=False, violations=[high(pre_existing=True), low], trajectory=[])
     monkeypatch.setattr(pc, "predict", lambda state, cmd, horizon_min=120: p)
     d = decide(reg(1, 800), snap())
-    assert d.decision == HOLD and d.reasons == ["PRESSURE_LOSS in 42 min"]
+    assert d.decision == HOLD and d.reasons[:1] == ["PRESSURE_LOSS in 42 min"]
+    assert not any("CHLORINE_HIGH" in r for r in d.reasons)
 
 
 def test_station_offline_gives_hold():
