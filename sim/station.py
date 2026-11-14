@@ -1,7 +1,14 @@
-"""Software station: Modbus TCP server on 127.0.0.1:5020 with the yaml defaults."""
+"""Software station: Modbus TCP server on 127.0.0.1:5020 with the yaml defaults.
+
+Read-only inputs (DEMAND_PCT, PRESENCE, CABINET_OPEN, ...) cannot be written over
+Modbus, so the sim takes them from a JSON file of raw values, re-read when it
+changes: `python -m sim.poke set PRESENCE 1`. Sim only; the ESP32 has real sensors.
+"""
 import argparse
 import asyncio
+import json
 import time
+from pathlib import Path
 
 from pymodbus.datastore import ModbusDeviceContext, ModbusSequentialDataBlock, ModbusServerContext
 from pymodbus.server import ModbusTcpServer
@@ -9,6 +16,10 @@ from pymodbus.server import ModbusTcpServer
 from gateway.registers import load_registers
 
 SIZE = 200  # covers addr 0-11 and the twin registers at 100-101
+INPUTS_PATH = Path(__file__).resolve().parent / "inputs.json"
+BOOT_INPUTS = {"DEMAND_PCT": 400}  # 40 % (README 4.3 example) so the twin's tank moves
+SETTABLE = ("discrete_input", "input_register")
+COMPUTED = ("LOGIC_HASH", "UPTIME_S")  # the station writes these itself
 
 
 def _block(regs, kind):
@@ -44,11 +55,28 @@ class Station:
 
     FC = {"coil": (1, 5), "discrete_input": (2, 2), "input_register": (4, 4), "holding_register": (3, 6)}
 
-    def __init__(self, regs):
+    def __init__(self, regs, inputs_path=INPUTS_PATH):
         self.regs = regs
         self.rt = None  # SimRuntime, attached once the server exists
         self.t0 = time.monotonic()
         self.in_step = False  # internal writes bypass the SAFE_MODE lock
+        self.inputs_path = Path(inputs_path)
+        self._inputs_text = None
+
+    async def apply_inputs(self):
+        """Copy the inputs file into the datastore when it has changed."""
+        try:  # compare contents: Windows mtimes are too coarse for quick successive sets
+            text = self.inputs_path.read_text(encoding="utf-8")
+            if text == self._inputs_text:
+                return
+            data = json.loads(text)
+        except (OSError, ValueError):
+            return
+        self._inputs_text = text
+        for name, raw in data.items():
+            reg = self.regs.by_name(name)
+            if reg and reg.kind in SETTABLE and name not in COMPUTED:
+                await self.put(reg.kind, reg.addr, int(raw) & 0xFFFF)
 
     async def get(self, kind, addr):
         v = await self.rt.async_getValues(self.FC[kind][0], addr, 1)
@@ -75,6 +103,7 @@ class Station:
         return None
 
     async def step(self):
+        await self.apply_inputs()
         g, r = self.get, self.regs
         safe = await g("coil", 3)
         lo, hi = (r.lookup("holding_register", 2).default, r.lookup("holding_register", 1).default) if safe else (
@@ -102,9 +131,18 @@ class Station:
             await asyncio.sleep(tick)
 
 
-async def serve(host="127.0.0.1", port=5020, tick=0.1):
+def write_inputs(values: dict, path=INPUTS_PATH):
+    """Atomically replace the inputs file (raw values by register name)."""
+    path = Path(path)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(values, indent=1), encoding="utf-8")
+    tmp.replace(path)
+
+
+async def serve(host="127.0.0.1", port=5020, tick=0.1, inputs_path=INPUTS_PATH, inputs=None):
     regs = load_registers()
-    st = Station(regs)
+    write_inputs(dict(BOOT_INPUTS if inputs is None else inputs), inputs_path)  # no stale state
+    st = Station(regs, inputs_path)
     ctx = make_context(regs)
     ctx.simdevices[0].action = st.action
     server = ModbusTcpServer(ctx, address=(host, port))
@@ -121,6 +159,8 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=regs.ports["sim_station"])
+    ap.add_argument("--demand", type=float, default=BOOT_INPUTS["DEMAND_PCT"] / 10,
+                    help="town demand at boot, %% (change live with: poke set DEMAND_PCT <raw>)")
     a = ap.parse_args()
-    print(f"software station on {a.host}:{a.port}")
-    asyncio.run(serve(a.host, a.port))
+    print(f"software station on {a.host}:{a.port}, demand {a.demand:g} %, inputs file {INPUTS_PATH}")
+    asyncio.run(serve(a.host, a.port, inputs={"DEMAND_PCT": round(a.demand * 10)}))

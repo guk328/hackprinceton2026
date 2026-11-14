@@ -12,6 +12,7 @@ venv/
 # runtime output
 *.db
 gateway/reports/
+sim/inputs.json
 
 # firmware build
 firmware/.pio/

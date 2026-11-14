@@ -308,3 +308,8 @@ pip install -r requirements.txt
 ```
 
 Then `python tasks.py --help` (`sim`, `gateway`, `test`, `demo`).
+
+Software station tips:
+- `python tasks.py sim --host 0.0.0.0` lets other laptops on the hotspot reach it (default is localhost only). It boots with 40 % demand (`--demand 60` to change).
+- Sensors the sim has no hardware for: `python -m sim.poke set PRESENCE 1`, `set CABINET_OPEN 1`, `set DEMAND_PCT 800` (raw values, same scaling as the register map; run on the sim's laptop).
+- Code that polls the station (twin, gateway) should hold one connection: `from sim.poke import Link` (example in `sim/poke.py`).
