@@ -1,4 +1,4 @@
-"""Physics stub (README 4.3 signature), timeout wrapper, and decide() failing closed."""
+"""Physics stub (gateway/physics_stub.py, README 4.3 signature), timeout wrapper, and decide() failing closed."""
 import dataclasses
 import inspect
 import time
@@ -6,7 +6,7 @@ import time
 import pytest
 
 from gateway import physics_client as pc
-from gateway.physics_client import Command, PlantState, Prediction, Violation, predict, step
+from gateway.physics_stub import Command, PlantState, Prediction, Violation, predict, step
 from gateway.policy import ALLOW, HOLD, decide
 from gateway.station import StationSnapshot
 from gateway.tests.test_policy import coil, reg, snap
@@ -81,7 +81,8 @@ def test_stub_never_raises():
 # --- snapshot -> PlantState --------------------------------------------------------------
 
 def test_plant_state_from_snapshot_uses_engineering_units():
-    assert pc.plant_state(snap()) == PlantState(
+    got = pc.plant_state(snap())
+    assert {f: getattr(got, f) for f in README_FIELDS} == dict(
         level_pct=60.0, chlorine_mgl=1.0, demand_pct=40.0, pump_on=True, doser_on=True,
         doser_rate_pct=10, level_high_sp=85.0, level_low_sp=40.0, auto_mode=True)
 
@@ -156,4 +157,70 @@ def test_envelope_and_physics_reasons_are_both_kept():
     d = decide(reg(0, 101), snap())
     assert d.decision == HOLD
     assert any("above max" in r for r in d.reasons)
-    assert any(r.startswith("CHLORINE_HIGH") for r in d.reasons)
+    assert any(r.startswith("SETPOINT_OUT_OF_RANGE") for r in d.reasons)  # real model's view
+
+
+# ---- step 12: the real physics package ----------------------------------------------------
+
+import physics as real  # noqa: E402
+
+
+def test_client_uses_the_real_package():
+    assert pc.USING_REAL_PHYSICS is True
+    assert pc.predict is real.predict and pc.PlantState is real.PlantState
+
+
+def test_horizon_covers_slow_scenarios():
+    assert pc.HORIZON_MIN >= 270  # pressure loss takes ~240 plant-min in scenario 2
+
+
+def test_plant_state_ignores_lagging_running_inputs():
+    """PUMP_RUNNING trails a write by a station tick; the commanded pump must still count."""
+    di = {"PRESENCE": 0, "CABINET_OPEN": 0, "HIGH_LEVEL_SWITCH": 0,
+          "PUMP_RUNNING": 0, "DOSER_RUNNING": 0}
+    s = pc.plant_state(snap(discrete_inputs=di))   # snap() has PUMP_CMD=1, DOSER_CMD=1
+    assert s.pump_on is True and s.doser_on is True
+
+
+def test_plant_state_applies_the_high_level_interlock():
+    di = {"PRESENCE": 0, "CABINET_OPEN": 0, "HIGH_LEVEL_SWITCH": 1}
+    s = pc.plant_state(snap(discrete_inputs=di))
+    assert s.pump_on is False and s.doser_on is False
+
+
+def test_plant_state_carries_safe_mode_and_alarm():
+    coils = dict(snap().coils, SAFE_MODE=1, ALARM=1)
+    s = pc.plant_state(snap(coils=coils))
+    assert s.safe_mode is True and s.alarm is True
+
+
+def reasons_for(req, **over):
+    d = decide(req, snap(**over))
+    return d, " | ".join(d.reasons)
+
+
+def test_scenario_1_real_model_reason_in_minutes():
+    d, text = reasons_for(reg(0, 100))
+    assert d.decision == HOLD
+    assert any(r.startswith("CHLORINE_HIGH in ") and r.endswith(" min") for r in d.reasons), text
+
+
+def test_scenario_2_pressure_loss_is_caught():
+    di = {"PRESENCE": 0, "CABINET_OPEN": 0, "PUMP_RUNNING": 1, "DOSER_RUNNING": 1}
+    coils = dict(snap().coils, AUTO_MODE=0)
+    d, text = reasons_for(coil(0, 0), coils=coils, discrete_inputs=di,
+                          input_registers=dict(snap().input_registers, DEMAND_PCT=1000))
+    assert d.decision == HOLD and "PRESSURE_LOSS in " in text, text
+
+
+def test_scenario_3_overflow_is_caught():
+    d, text = reasons_for(reg(1, 1000))
+    assert d.decision == HOLD and "TANK_OVERFLOW in " in text, text
+
+
+@pytest.mark.parametrize("req", [reg(0, 100), reg(1, 1000)])
+def test_real_check_finishes_inside_the_timeout(req):
+    state = pc.plant_state(snap())
+    t0 = time.perf_counter()
+    pc.check(state, pc.Command(req.kind, req.address, req.value))
+    assert time.perf_counter() - t0 < pc.TIMEOUT_S

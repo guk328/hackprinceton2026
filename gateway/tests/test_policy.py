@@ -101,7 +101,7 @@ def test_every_reason_is_collected(monkeypatch):
     d = decide(reg(0, 500), snap())
     assert d.decision == HOLD
     assert "last check" in d.reasons and len(d.reasons) == 3 + 2  # + 2 context reasons
-    assert "above max" in d.reasons[0] and d.reasons[1].startswith("CHLORINE_HIGH")
+    assert "above max" in d.reasons[0] and d.reasons[1].startswith("SETPOINT_OUT_OF_RANGE")
 
 
 def test_deny_outranks_hold_and_keeps_both_reasons(monkeypatch):
