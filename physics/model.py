@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass, replace
 from math import isfinite
+from typing import Tuple
+
+from .limits import PUMP_START_WINDOW_S
 
 
 TANK_CAPACITY_M3 = 400.0
@@ -28,6 +31,10 @@ class PlantState:
     alarm: bool = False
     chlorine_target_mgl: float = 1.0
     logic_version: int = 1
+    # Plant clock [s], independent of wall time. Empty history assumes no known
+    # prior starts; callers must supply observed history for real cycle coverage.
+    elapsed_s: float = 0.0
+    pump_start_times_s: Tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -59,6 +66,18 @@ def step(state: PlantState, dt_s: float = 1.0) -> PlantState:
         raise ValueError("level [%] and chlorine [mg/L] must be nonnegative")
     if not 0 <= state.demand_pct <= 100 or not 0 <= state.doser_rate_pct <= 100:
         raise ValueError("demand and doser rate must be within 0–100 [%]")
+    if (isinstance(state.elapsed_s, bool)
+            or not isinstance(state.elapsed_s, (int, float))
+            or not isfinite(state.elapsed_s) or state.elapsed_s < 0):
+        raise ValueError("elapsed_s must be finite and nonnegative [s]")
+    history = state.pump_start_times_s
+    if (not isinstance(history, tuple)
+            or any(isinstance(t, bool) or not isinstance(t, (int, float))
+                   or not isfinite(t) or t > state.elapsed_s for t in history)
+            or any(a > b for a, b in zip(history, history[1:]))):
+        raise ValueError("pump start history must be an ordered tuple of past times [s]")
+    if not isfinite(state.elapsed_s + dt_s):
+        raise ValueError("plant clock overflowed [s]")
     if dt_s == 0:
         return replace(state)
 
@@ -72,6 +91,10 @@ def step(state: PlantState, dt_s: float = 1.0) -> PlantState:
         elif state.level_pct > high_sp:
             pump_on = False
 
+    if pump_on and not state.pump_on:
+        history = history + (state.elapsed_s,)
+    next_elapsed_s = state.elapsed_s + dt_s
+    history = tuple(t for t in history if t > next_elapsed_s - PUMP_START_WINDOW_S)
     doser_on = state.doser_on and not state.safe_mode
 
     dt_h = dt_s / 3600.0
@@ -102,4 +125,6 @@ def step(state: PlantState, dt_s: float = 1.0) -> PlantState:
         chlorine_mgl=next_chlorine_mgl,
         pump_on=pump_on,
         doser_on=doser_on,
+        elapsed_s=next_elapsed_s,
+        pump_start_times_s=history,
     )

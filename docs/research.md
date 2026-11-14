@@ -209,3 +209,34 @@ results, malformed inputs and the shared register bounds. No dependencies added.
 Forty individual paired 120-min forecasts across overdose/overflow/invalid-SP/safe
 fixtures measured median 14.01 ms and maximum 14.79 ms locally. Timing is a local
 measurement, not a hard real-time guarantee or a benchmark of future checks.
+
+
+## Step 5 — remaining demo guards
+
+All six codes now run on the candidate and baseline forecasts. Strict lower
+bounds are chlorine <0.2 mg/L and tank level <15%; equality is allowed.
+These are provisional demo guards. Tank level is a pressure proxy, not a
+hydraulic pressure calculation; source applicability remains research step 11.
+The shared register envelopes and low-setpoint < high-setpoint rule still apply.
+Invalid doser rates fail closed without attempting a physical trajectory.
+
+Pump history uses optional `elapsed_s` [plant-s] and immutable
+`pump_start_times_s` [plant-s] fields. Starts are counted in (now−3600, now];
+more than six triggers PUMP_SHORT_CYCLE. Manual OFF→ON writes and local
+AUTO/SAFE_MODE OFF→ON transitions record a start. Already-running pumps do
+not create one. Step advances plant time and removes expired history. Callers
+must carry these fields forward: default () means no known previous starts,
+not proof the real motor had none. Malformed, future or unsorted history fails
+closed. The six-start limit is a motor-protection design assumption awaiting
+verification for the selected motor.
+
+SAFE_MODE retains doser-off behavior, local 40/85% pump hysteresis, and ignored
+remote pump/doser/auto/register writes; mode/alarm writes remain available.
+Auto hysteresis keeps the preceding pump state at exact equality and between
+setpoints. Safe mode cannot prevent eventual low chlorine with the doser off;
+the predictor still reports that hazard.
+
+Verification: 21 existing physics tests passed; focused checks cover equality,
+lower crossings, seventh start, rolling expiry, manual/automatic history,
+malformed histories, missing default history, configuration envelopes and
+SAFE_MODE. No dependencies added (installed pytest 7.4.4).

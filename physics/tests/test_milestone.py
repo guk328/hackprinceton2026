@@ -94,7 +94,8 @@ class MilestoneTests(unittest.TestCase):
         self.assertTrue(result.assessment_complete)
         self.assertEqual(result.violations, [])
         self.assertEqual(set(result.checked_limits),
-                         {"CHLORINE_HIGH", "TANK_OVERFLOW", "SETPOINT_OUT_OF_RANGE"})
+                         {"CHLORINE_HIGH", "CHLORINE_LOW", "TANK_OVERFLOW", "PRESSURE_LOSS",
+                          "PUMP_SHORT_CYCLE", "SETPOINT_OUT_OF_RANGE"})
         invalid = replace(state, level_high_sp=100)
         self.assertTrue(predict(invalid, Command("register", 1, 850)).safe)
         self.assertEqual(step(state).pump_on, True)  # Public import smoke check.

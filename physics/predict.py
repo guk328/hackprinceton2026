@@ -1,6 +1,6 @@
-"""Copied-state forecasts with chlorine-high, overflow and setpoint guards.
+"""Copied-state forecasts with all six demo guards.
 
-safe describes CHECKED_LIMITS only; the other ME limits are added in step 5.
+Pump cycling uses the supplied history plus predicted starts.
 Only standard-library code is used; no station or network access occurs here.
 """
 
@@ -9,7 +9,11 @@ from math import isfinite
 from numbers import Real
 from typing import List, Optional, Tuple
 
-from .limits import CHECKED_LIMITS, CHLORINE_HIGH_MGL, SETPOINT_BOUNDS, TANK_OVERFLOW_PCT
+from .limits import (
+    CHECKED_LIMITS, CHLORINE_HIGH_MGL, CHLORINE_LOW_MGL,
+    SETPOINT_BOUNDS, TANK_OVERFLOW_PCT, PRESSURE_LOSS_PCT,
+    MAX_PUMP_STARTS_PER_HOUR, PUMP_START_WINDOW_S,
+)
 from .model import TANK_CAPACITY_M3, Command, PlantState, step
 
 
@@ -84,7 +88,10 @@ def _apply_command(state, cmd):
         # Match station locking: mode/alarm remain available; control writes lock.
         if state.safe_mode and cmd.address in (0, 1, 2):
             return replace(state)
-        return replace(state, **{COIL_FIELDS[cmd.address]: bool(cmd.value)})
+        updates = {COIL_FIELDS[cmd.address]: bool(cmd.value)}
+        if cmd.address == 0 and cmd.value and not state.pump_on:
+            updates["pump_start_times_s"] = state.pump_start_times_s + (state.elapsed_s,)
+        return replace(state, **updates)
     if cmd.kind == "register":
         if cmd.address not in REGISTER_FIELDS:
             raise ValueError("unknown or twin-only register address")
@@ -111,6 +118,21 @@ def _check_limits(state, minutes_until, seen=()):
                    f"Tank exceeds the 95% overflow guard in about {minutes_until:.1f} plant-minutes")
         violations.append(Violation("TANK_OVERFLOW", minutes_until,
                                     state.level_pct, TANK_OVERFLOW_PCT, message))
+    starts = sum(state.elapsed_s - PUMP_START_WINDOW_S < t <= state.elapsed_s
+                 for t in state.pump_start_times_s)
+    for code, value, limit, crossed, description in (
+        ("CHLORINE_LOW", state.chlorine_mgl, CHLORINE_LOW_MGL,
+         state.chlorine_mgl < CHLORINE_LOW_MGL, "Chlorine below 0.2 mg/L residual guard"),
+        ("PRESSURE_LOSS", state.level_pct, PRESSURE_LOSS_PCT,
+         state.level_pct < PRESSURE_LOSS_PCT, "Tank below 15% pressure proxy"),
+        ("PUMP_SHORT_CYCLE", starts, MAX_PUMP_STARTS_PER_HOUR,
+         starts > MAX_PUMP_STARTS_PER_HOUR, "Pump exceeds 6 starts in a rolling plant-hour"),
+    ):
+        if code not in seen and crossed:
+            violations.append(Violation(
+                code, minutes_until, value, limit,
+                f"{description} at {minutes_until:.1f} plant-minutes",
+            ))
     if minutes_until == 0:
         for name, (low, high, unit) in SETPOINT_BOUNDS.items():
             value = getattr(state, name)
@@ -144,7 +166,17 @@ def _rollout(state, horizon_min):
         if elapsed_s >= total_s:
             break
         dt_s = min(10.0, total_s - elapsed_s)
-        state = step(state, dt_s=dt_s)
+        next_state = step(state, dt_s=dt_s)
+        if next_state.pump_on and not state.pump_on:
+            # Local control starts at the beginning of this interval. Check
+            # before advancing so a start expiring during dt cannot hide #7.
+            started = replace(
+                state, pump_on=True,
+                pump_start_times_s=state.pump_start_times_s + (state.elapsed_s,),
+            )
+            for violation in _check_limits(started, t_min, first_crossings):
+                first_crossings.setdefault(violation.code, violation)
+        state = next_state
         elapsed_s += dt_s
     return trajectory, list(first_crossings.values())
 
@@ -164,8 +196,9 @@ def predict(state, cmd, horizon_min=120):
 
     Horizon is 0–1440 plant-min. Invalid inputs return unsafe, never an exception.
     safe=True means no CHECKED_LIMITS violation in the candidate trajectory.
-    assessment_complete marks successful evaluation of that scope, not coverage
-    of the remaining low-chlorine, pressure-loss and short-cycle checks (step 5).
+    assessment_complete marks successful evaluation of all six demo guards.
+    Short-cycle coverage assumes supplied pump history is complete; an omitted
+    history means no known starts before the supplied state's plant time.
     """
     try:
         _validate_state(state)

@@ -19,4 +19,16 @@ SETPOINT_BOUNDS = {
     "chlorine_target_mgl": (0.2, 4.0, "mg/L"),
 }
 
-CHECKED_LIMITS = ("CHLORINE_HIGH", "TANK_OVERFLOW", "SETPOINT_OUT_OF_RANGE")
+# Provisional demo residual floor from PROMPT_ME.md; applicability/source
+# verification belongs to research step 11, not a universal compliance claim.
+CHLORINE_LOW_MGL = 0.2
+# Demo pressure proxy: no hydraulic network/pressure calculation is modelled.
+PRESSURE_LOSS_PCT = 15.0
+# Demo motor-protection assumption; verify against the chosen motor in step 11.
+MAX_PUMP_STARTS_PER_HOUR = 6
+PUMP_START_WINDOW_S = 3600.0
+
+CHECKED_LIMITS = (
+    "CHLORINE_HIGH", "CHLORINE_LOW", "TANK_OVERFLOW", "PRESSURE_LOSS",
+    "PUMP_SHORT_CYCLE", "SETPOINT_OUT_OF_RANGE",
+)
