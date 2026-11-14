@@ -1,4 +1,4 @@
-"""Read/poke a Modbus station. Step 3: read only. Usage: python -m sim.poke [--port N] read all"""
+"""Read/poke a Modbus station. Usage: python -m sim.poke [--port N] read all | write holding|coil ADDR VALUE"""
 import argparse
 
 from pymodbus.client import ModbusTcpClient
@@ -26,6 +26,17 @@ def read_all(host="127.0.0.1", port=5020, regs=None) -> dict[tuple[str, int], in
     return out
 
 
+def write(what, addr, value, host="127.0.0.1", port=5020, regs=None):
+    regs = regs or load_registers()
+    with ModbusTcpClient(host, port=port) as c:
+        if what == "coil":
+            r = c.write_coil(addr, bool(value), device_id=regs.unit_id)
+        else:
+            r = c.write_register(addr, value, device_id=regs.unit_id)
+        if r.isError():
+            raise RuntimeError(f"write {what} {addr}: {r}")
+
+
 def main():
     regs = load_registers()
     ap = argparse.ArgumentParser(prog="sim.poke")
@@ -34,7 +45,15 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     r = sub.add_parser("read")
     r.add_argument("what", choices=["all"])
+    w = sub.add_parser("write")
+    w.add_argument("what", choices=["holding", "coil"])
+    w.add_argument("addr", type=int)
+    w.add_argument("value", type=int)
     a = ap.parse_args()
+    if a.cmd == "write":
+        write(a.what, a.addr, a.value, a.host, a.port, regs)
+        print(f"wrote {a.what} {a.addr} = {a.value}")
+        return
     for (kind, addr), v in read_all(a.host, a.port, regs).items():
         reg = regs.lookup(kind, addr)
         print(f"{kind:17} {addr:3} {reg.name:18} {v}")
