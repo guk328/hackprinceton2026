@@ -6,6 +6,7 @@
     GET  /stream            server-sent events: every new event as it is saved (no trajectory)
     POST /operator/reply    {"reply": "ALLOW"|"BLOCK", "event_id": "evt_0042"} -> inbox queue
     GET  /reports/{id}      gateway/reports/<id>.md as text
+    GET  /                  dashboard/ (static, mounted last so the routes above win)
 
 Read-only except /operator/reply, which only queues an answer for the agent runner
 (a later step); nothing here writes to the station or touches the allow/hold path.
@@ -18,12 +19,14 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel
 
 from gateway.events import EventStore
 
 REPORTS_DIR = Path(__file__).parent / "reports"
+DASHBOARD_DIR = Path(__file__).parent.parent / "dashboard"
 EVENT_ID = re.compile(r"^evt_\d{4,}$")
 
 
@@ -41,7 +44,7 @@ def slim(event: dict) -> dict:
 
 
 def create_app(store: EventStore, poller=None, station_view=None,
-               reports_dir: Path = REPORTS_DIR) -> FastAPI:
+               reports_dir: Path = REPORTS_DIR, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
     """`poller` is a StationPoller (or None: /state reports not connected);
     `station_view` turns its snapshot into the README 4.4 station object."""
     app = FastAPI(title="Backflow gateway")
@@ -94,4 +97,6 @@ def create_app(store: EventStore, poller=None, station_view=None,
             raise HTTPException(404, f"no report for {event_id}")
         return path.read_text(encoding="utf-8")
 
+    if dashboard_dir.is_dir():
+        app.mount("/", StaticFiles(directory=dashboard_dir, html=True), name="dashboard")
     return app

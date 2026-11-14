@@ -97,3 +97,14 @@ def test_stream_delivers_new_events_without_trajectory(store):
     finally:
         server.should_exit = True
         t.join(5)
+
+
+def test_dashboard_served_at_root_without_shadowing_routes(client, store):
+    r = client.get("/")
+    assert r.status_code == 200 and "text/html" in r.headers["content-type"]
+    assert '<script src="app.js">' in r.text
+    js = client.get("/app.js")
+    assert js.status_code == 200 and 'new EventSource("/stream")' in js.text
+    store.save_event(EVENT)
+    assert client.get("/events").json()[0]["id"] == "evt_0001"   # API routes still win
+    assert client.get("/nope.html").status_code == 404
