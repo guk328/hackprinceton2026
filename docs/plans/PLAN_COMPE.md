@@ -37,7 +37,7 @@ pytest-asyncio==1.5.0
   Proof: `pytest -x -q gateway/tests/test_registers.py`. Model: sonnet
 - [x] **3. Software station on 127.0.0.1:5020, plus `poke read`.** Files: `sim/station.py`, `sim/poke.py` (read only). Defaults from the yaml; check the pymodbus 3.16 server examples in site-packages first.
   Proof: `python -m sim.station` runs; `python -m sim.poke read all` prints the yaml defaults. Model: sonnet
-- [ ] **4. `poke write` and station control logic.** Files: `sim/poke.py`, `sim/station.py`, `sim/test_station.py`. Auto pump from setpoints, SAFE_MODE behaviour, LOGIC_HASH (CRC16 of holding 0–4), UPTIME_S.
+- [x] **4. `poke write` and station control logic.** Files: `sim/poke.py`, `sim/station.py`, `sim/test_station.py`. Auto pump from setpoints, SAFE_MODE behaviour, LOGIC_HASH (CRC16 of holding 0–4), UPTIME_S.
   Proof: `poke write holding 1 900` changes LOGIC_HASH; `pytest -x -q sim`. Model: sonnet
 
 **Build 2: transparent proxy (Sat 3am milestone)**
