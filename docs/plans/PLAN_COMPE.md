@@ -33,7 +33,7 @@ pytest-asyncio==1.5.0
 **Build 1: software station (Fri 11pm milestone: steps 1-3 done, station running)**
 - [x] **1. Venv, requirements, task runner.** Files: `requirements.txt`, `tasks.py`, `.gitattributes`, `README.md` (Run it), `sim/__init__.py`, `gateway/__init__.py`.
   Proof: `pip install -r requirements.txt` succeeds; `python -c "import pymodbus, deepagents, fastapi"`; `python tasks.py --help`. Model: sonnet
-- [ ] **2. Register map loader.** Files: `gateway/registers.py`, `gateway/tests/test_registers.py`. Name, scale, min/max and twin-only lookup by (kind, addr).
+- [x] **2. Register map loader.** Files: `gateway/registers.py`, `gateway/tests/test_registers.py`. Name, scale, min/max and twin-only lookup by (kind, addr).
   Proof: `pytest -x -q gateway/tests/test_registers.py`. Model: sonnet
 - [ ] **3. Software station on 127.0.0.1:5020, plus `poke read`.** Files: `sim/station.py`, `sim/poke.py` (read only). Defaults from the yaml; check the pymodbus 3.16 server examples in site-packages first.
   Proof: `python -m sim.station` runs; `python -m sim.poke read all` prints the yaml defaults. Model: sonnet
