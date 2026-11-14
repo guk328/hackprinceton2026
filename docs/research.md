@@ -125,8 +125,8 @@ Horizon is bounded to 0–1440 plant-min to cap work/memory. Invalid inputs and
 numerical overflow return `safe=False` with SETPOINT_OUT_OF_RANGE at t=0;
 value/limit placeholders of 0 in that input-error result are not physical limits.
 
-**This is a forecast foundation, not the completed safety checker.** Until step 4
-implements the physical detectors, valid forecasts also return `safe=False`,
+**Step 3 snapshot (superseded by step 4 below):** Before the physical detectors,
+valid forecasts also returned `safe=False`,
 `assessment_complete=False`, and an empty violations list. An empty list must
 not be interpreted as approval. The limit-check hook retains the first crossing
 per code. Baseline attribution is tested using a test-only detector: a same-code
@@ -144,3 +144,68 @@ forecast measured median 13.57 ms, slowest batch average 14.69 ms (5 batches
 of 5 calls on the local Python 3.9 environment, without real detectors).
 The 24-hour normal-day volume/mass residuals remain below 1e−8 m³/g and the
 level envelope remains within the previously documented range.
+
+## Step 4 Friday-night physics handoff
+
+The public imports and function signatures are unchanged. The predictor now
+implements CHLORINE_HIGH (>4.0 mg/L), TANK_OVERFLOW (>95%) and the shared
+setpoint envelope (including low < high). Constants and source comments live
+in `physics/limits.py`; no shared or teammate-owned files were changed.
+
+Threshold evidence, checked November 13, 2026:
+
+- [EPA primary regulations](https://www.epa.gov/ground-water-and-drinking-water/national-primary-drinking-water-regulations) list chlorine MRDL 4.0 mg/L as Cl2. This project's instantaneous tank guard is a demo design choice, not a complete compliance calculation.
+- [Oregon Health Authority](https://www.oregon.gov/oha/ph/healthyenvironments/drinkingwater/monitoring/pages/mon-mrdl.aspx) explains the running annual average of monthly averages used for compliance. Do not claim one instantaneous model crossing itself proves a regulatory violation.
+- The 95% guard reserves 5% tank headroom per PROMPT_ME.md; it is an unvalidated design assumption, not a universal overflow height. Setpoint ranges come from shared/registers.yaml and are contract-tested.
+
+Valid forecasts set `assessment_complete=True`; `safe=True` means no candidate
+violation among `checked_limits`: CHLORINE_HIGH, TANK_OVERFLOW and
+SETPOINT_OUT_OF_RANGE. Pressure loss, low chlorine and short cycling are still
+step 5 work. This metadata makes the milestone's limited coverage explicit.
+Invalid inputs/numerical failures remain unsafe with assessment_complete=False.
+
+Both rollouts check t=0 and every sample thereafter. Exact equality is not a
+crossing; minutes_until is the first sample strictly above the threshold, with
+at most 10 s sampling resolution relative to the simulated crossing. The value
+is the actual sampled concentration [mg/L] or level [%], and limit is 4 or 95.
+Only the first crossing per code is returned. Pre-existing hazards remain unsafe;
+candidate and baseline times are both retained when a command accelerates harm.
+Numeric out-of-envelope level setpoints still get physical forecasts, so a 100%
+high setpoint can report both immediate misconfiguration and later overflow.
+
+Reproducible 120 plant-min fixtures (demand 40%, pump 60 m³/h, tank 400 m³):
+
+| Case | Initial conditions / command | Expected result |
+|---|---|---|
+| Overdose | Level 40%, C=1 mg/L, manual pump+doser on, dose 10→100% | CHLORINE_HIGH at 80.667 min; sampled 4.001457 mg/L; not pre-existing |
+| Overflow | Level 90%, manual pump off, then pump coil 0→1 | TANK_OVERFLOW at 28.667 min; sampled 95.016667%; not pre-existing |
+| Invalid high SP | Level 90%, auto mode/pump on, high SP raw 850→1000 | SETPOINT_OUT_OF_RANGE at 0 min, then TANK_OVERFLOW at 28.667 min |
+| Safe change | Default state, high SP raw 850→840 | safe=True, no implemented-limit violations |
+
+Overflow hand check: (95−90) / 10.5 percentage-points/h × 60 = 28.571 min;
+the first sampled crossing differs by less than 10 s. The README's 60%-full
+starting example reaches only 3.911214 mg/L by 120 min at maximum dose with
+these parameters, so it does not exercise CHLORINE_HIGH within that horizon.
+Use the 40%-full fixture for the handoff. Do not claim the illustrative 11.2 min
+or the desired 10–20 min timing; defensible tuning remains plan step 14.
+
+CompE: run from the repository root, using any Python 3.9+ interpreter (no new dependencies):
+
+```sh
+python3 -m unittest discover -s physics/tests -p test_milestone.py -q
+```
+
+```python
+from physics import PlantState, Command, predict, step
+state = PlantState(level_pct=40.0, auto_mode=False)
+p = predict(state, Command(kind="register", address=0, value=100))
+print(p.safe, p.checked_limits)
+print([(v.code, v.minutes_until, v.value, v.limit, v.pre_existing) for v in p.violations])
+```
+
+All 21 standard-library physics tests pass, including real baseline attribution,
+earlier candidate harm, strict boundaries, multiple hazards, purity, JSON-safe
+results, malformed inputs and the shared register bounds. No dependencies added.
+Forty individual paired 120-min forecasts across overdose/overflow/invalid-SP/safe
+fixtures measured median 14.01 ms and maximum 14.79 ms locally. Timing is a local
+measurement, not a hard real-time guarantee or a benchmark of future checks.

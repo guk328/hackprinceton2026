@@ -1,6 +1,6 @@
-"""Copied-state forecasts. Physical limit detectors will be added in ME step 4.
+"""Copied-state forecasts with chlorine-high, overflow and setpoint guards.
 
-Until then, every result is explicitly incomplete and fails closed (safe=False).
+safe describes CHECKED_LIMITS only; the other ME limits are added in step 5.
 Only standard-library code is used; no station or network access occurs here.
 """
 
@@ -9,6 +9,7 @@ from math import isfinite
 from numbers import Real
 from typing import List, Optional, Tuple
 
+from .limits import CHECKED_LIMITS, CHLORINE_HIGH_MGL, SETPOINT_BOUNDS, TANK_OVERFLOW_PCT
 from .model import TANK_CAPACITY_M3, Command, PlantState, step
 
 
@@ -42,6 +43,7 @@ class Prediction:
     trajectory: List[Tuple[float, float, float]] = field(default_factory=list)
     baseline_trajectory: List[Tuple[float, float, float]] = field(default_factory=list)
     assessment_complete: bool = False
+    checked_limits: Tuple[str, ...] = CHECKED_LIMITS
 
 
 def _validate_state(state):
@@ -96,9 +98,35 @@ def _apply_command(state, cmd):
     raise ValueError("command kind must be 'coil' or 'register'")
 
 
-def _check_limits(state, minutes_until):
-    """Step 4 will supply physical checks; no safe verdict until then."""
-    return []
+def _check_limits(state, minutes_until, seen=()):
+    """Report first sampled crossings; settings are constant within a rollout."""
+    violations = []
+    if "CHLORINE_HIGH" not in seen and state.chlorine_mgl > CHLORINE_HIGH_MGL:
+        message = ("Chlorine is already above 4.0 mg/L" if minutes_until == 0 else
+                   f"Chlorine exceeds 4.0 mg/L in about {minutes_until:.1f} plant-minutes")
+        violations.append(Violation("CHLORINE_HIGH", minutes_until,
+                                    state.chlorine_mgl, CHLORINE_HIGH_MGL, message))
+    if "TANK_OVERFLOW" not in seen and state.level_pct > TANK_OVERFLOW_PCT:
+        message = ("Tank is already above the 95% overflow guard" if minutes_until == 0 else
+                   f"Tank exceeds the 95% overflow guard in about {minutes_until:.1f} plant-minutes")
+        violations.append(Violation("TANK_OVERFLOW", minutes_until,
+                                    state.level_pct, TANK_OVERFLOW_PCT, message))
+    if minutes_until == 0:
+        for name, (low, high, unit) in SETPOINT_BOUNDS.items():
+            value = getattr(state, name)
+            if not low <= value <= high:
+                violations.append(Violation(
+                    "SETPOINT_OUT_OF_RANGE", 0.0, value, low if value < low else high,
+                    f"{name} is {value:g} {unit}, outside {low:g}–{high:g} {unit}",
+                ))
+                break
+        else:
+            if state.level_low_sp >= state.level_high_sp:
+                violations.append(Violation(
+                    "SETPOINT_OUT_OF_RANGE", 0.0, state.level_low_sp, state.level_high_sp,
+                    "Low level setpoint must be below the high level setpoint [%]",
+                ))
+    return violations
 
 
 def _rollout(state, horizon_min):
@@ -111,7 +139,7 @@ def _rollout(state, horizon_min):
             raise ValueError("nonfinite model result")
         t_min = elapsed_s / 60.0
         trajectory.append((t_min, state.level_pct, state.chlorine_mgl))
-        for violation in _check_limits(state, t_min):
+        for violation in _check_limits(state, t_min, first_crossings):
             first_crossings.setdefault(violation.code, violation)
         if elapsed_s >= total_s:
             break
@@ -135,8 +163,9 @@ def predict(state, cmd, horizon_min=120):
     """Forecast candidate and baseline, including t=0 and the exact horizon.
 
     Horizon is 0–1440 plant-min. Invalid inputs return unsafe, never an exception.
-    Step 3 returns trajectories only: assessment_complete=False and safe=False
-    even when violations is empty, until the physical detectors are implemented.
+    safe=True means no CHECKED_LIMITS violation in the candidate trajectory.
+    assessment_complete marks successful evaluation of that scope, not coverage
+    of the remaining low-chlorine, pressure-loss and short-cycle checks (step 5).
     """
     try:
         _validate_state(state)
@@ -148,9 +177,11 @@ def predict(state, cmd, horizon_min=120):
         baseline_trajectory, baseline_violations = _rollout(replace(state), horizon_min)
         trajectory, violations = _rollout(candidate, horizon_min)
         return Prediction(
+            safe=not violations,
             violations=_attribute_violations(violations, baseline_violations),
             trajectory=trajectory,
             baseline_trajectory=baseline_trajectory,
+            assessment_complete=True,
         )
     except Exception:
         # A bad request or model error must never become gateway permission.
