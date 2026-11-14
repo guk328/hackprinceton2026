@@ -23,9 +23,10 @@ from dataclasses import replace
 
 from dotenv import load_dotenv
 
-from gateway import policy
+from gateway import events, policy
 from gateway.frames import (WRITE_FCS, Frame, FrameBuffer, FrameError, WriteRequest,
                             decode_write, exception_reply)
+from gateway.events import EventStore
 from gateway.held import HeldStore
 from gateway.policy import ALLOW, DENY, HOLD, Decision
 from gateway.registers import load_registers
@@ -85,12 +86,14 @@ def log_frame(src: str, direction: str, frame: Frame, req: Frame | None = None, 
     addr, count, values = summarize(frame, req, writes)
     log.info("%s %s tid=%d fc=%d addr=%s count=%s values=%s",
              src, direction, frame.tid, frame.fc, addr, count, values)
+    return addr, count, values
 
 
 class Proxy:
     def __init__(self, station_host="127.0.0.1", station_port=5020,
                  host="0.0.0.0", port=1502, regs=None, connect_timeout=3.0,
-                 poller: StationPoller | None = None, held: HeldStore | None = None):
+                 poller: StationPoller | None = None, held: HeldStore | None = None,
+                 store: EventStore | None = None):
         self.station = (station_host, station_port)
         self.host, self.port = host, port
         self.regs = regs or load_registers()
@@ -98,6 +101,7 @@ class Proxy:
         self.poller = poller             # None: start() makes one, read on demand
         self._own_poller = poller is None
         self.held = held or HeldStore()
+        self.store = store               # None: nothing is persisted (log lines only)
         self._write_lock = asyncio.Lock()   # one write decided and settled at a time
         self._server: asyncio.Server | None = None
         self._tasks: set[asyncio.Task] = set()
@@ -122,12 +126,60 @@ class Proxy:
         if self._own_poller and self.poller:
             await self.poller.close()
 
-    async def _decide_frame(self, writes) -> tuple[str, list[Decision]]:
+    def _record(self, src, direction, frame: Frame, req: Frame | None = None, writes=None):
+        """Log one frame and store it. Returns its traffic row id (None without a store).
+        Storage trouble is logged and never changes what is allowed or held."""
+        addr, count, values = log_frame(src, direction, frame, req, writes)
+        if self.store is None:
+            return None
+        try:
+            return self.store.save_traffic(src, direction, frame.tid, frame.fc, addr, count,
+                                           values, frame.raw)
+        except Exception:
+            log.exception("could not store a traffic row")
+            return None
+
+    def _station_view(self, snap: StationSnapshot) -> dict:
+        """The README 4.4 `station` object, in engineering units."""
+        def scaled(name):
+            reg, raw = self.regs.by_name(name), snap.holding.get(name)
+            return None if reg is None or raw is None else raw / reg.scale
+        di = snap.discrete_inputs
+        return {"presence": bool(di.get("PRESENCE")), "cabinet_open": bool(di.get("CABINET_OPEN")),
+                "level_pct": scaled("TANK_LEVEL_PCT"), "chlorine_mgl": scaled("CHLORINE_MGL")}
+
+    def _save_event(self, src, fc, req: WriteRequest | None, d: Decision, verdict: str,
+                    before: StationSnapshot, frame_row):
+        """One event for one write (or for a frame that carries none, like an unknown
+        function code). `verdict` is what happened to the whole frame."""
+        if self.store is None:
+            return
+        reasons = list(d.reasons)
+        if d.decision != verdict:
+            reasons.append(f"frame {verdict.lower()} because another write in it was {verdict}")
+        old = None
+        if req and req.name:
+            old = (before.coils if req.kind == "coil" else before.holding).get(req.name)
+        try:
+            self.store.save_event({
+                "src_ip": src, "function": fc,
+                "kind": req.kind if req else None, "address": req.address if req else None,
+                "name": req.name if req else None,
+                "old_value": None if old is None else int(old),
+                "new_value": req.value if req else None,
+                "decision": verdict, "reasons": reasons,
+                "prediction": events.prediction_json(d.prediction),
+                "station": self._station_view(before)}, traffic_id=frame_row)
+        except Exception:
+            log.exception("could not store an event")
+
+    async def _decide_frame(self, writes, src=None, frame_row=None) -> tuple[str, list[Decision]]:
         """Strictest verdict over every write in the frame. Anything that goes
         wrong while deciding is a HOLD."""
         station = await self.poller.refresh()
-        verdict, decisions = ALLOW, []
+        verdict, decisions, befores = ALLOW, [], []
         for req in writes:
+            befores.append(station)
             try:
                 d = policy.decide(req, station, regs=self.regs)
                 rank = STRICTNESS.index(d.decision)
@@ -139,6 +191,8 @@ class Proxy:
             if rank > STRICTNESS.index(verdict):
                 verdict = d.decision
             station = with_write(station, req)
+        for req, d, before in zip(writes, decisions, befores):
+            self._save_event(src or req.src_ip, req.fc, req, d, verdict, before, frame_row)
         return verdict, decisions
 
     def _refuse(self, src, c_writer, frame: Frame, writes, verdict, decisions):
@@ -184,7 +238,7 @@ class Proxy:
             while data := await c_reader.read(4096):
                 for frame in buf.feed(data):
                     writes = decode_write(frame, src, self.regs) if frame.fc in WRITE_FCS else None
-                    log_frame(src, C2S, frame, writes=writes)
+                    frame_row = self._record(src, C2S, frame, writes=writes)
                     if relay is None or relay.done():      # station down
                         self._reply_exception(src, c_writer, frame, EXC_TARGET_FAILED)
                         await c_writer.drain()
@@ -196,7 +250,7 @@ class Proxy:
                         continue
                     if writes:
                         async with self._write_lock:
-                            verdict, decisions = await self._decide_frame(writes)
+                            verdict, decisions = await self._decide_frame(writes, src, frame_row)
                             if verdict == ALLOW:   # the only line that sends a write
                                 pending[frame.tid] = frame
                                 s_writer.write(frame.raw)
@@ -206,6 +260,8 @@ class Proxy:
                     else:
                         verdict = DENY
                         decisions = [Decision(DENY, [f"function code {frame.fc} is not allowed"])]
+                        self._save_event(src, frame.fc, None, decisions[0], DENY,
+                                         self.poller.snapshot, frame_row)
                     self._refuse(src, c_writer, frame, writes or [], verdict, decisions)
                     await c_writer.drain()
         except FrameError as e:
@@ -226,7 +282,7 @@ class Proxy:
         try:
             while data := await s_reader.read(4096):
                 for frame in buf.feed(data):
-                    log_frame(src, S2C, frame, req=pending.pop(frame.tid, None))
+                    self._record(src, S2C, frame, req=pending.pop(frame.tid, None))
                     c_writer.write(frame.raw)
                 await c_writer.drain()
             log.warning("%s station closed the connection", src)
@@ -236,11 +292,17 @@ class Proxy:
             self._reply_exception(src, c_writer, req, EXC_TARGET_FAILED)
         pending.clear()
 
-    @staticmethod
-    def _reply_exception(src, c_writer, req: Frame, code: int):
+    def _reply_exception(self, src, c_writer, req: Frame, code: int):
+        reply = exception_reply(req, code)
         log.info("%s %s tid=%d fc=%d addr=None count=None values=exception %#04x",
                  src, G2C, req.tid, req.fc | 0x80, code)
-        c_writer.write(exception_reply(req, code))
+        if self.store is not None:
+            try:
+                self.store.save_traffic(src, G2C, req.tid, req.fc | 0x80,
+                                        values=f"exception {code:#04x}", raw=reply)
+            except Exception:
+                log.exception("could not store a traffic row")
+        c_writer.write(reply)
 
 
 def config() -> dict:
@@ -254,7 +316,8 @@ def config() -> dict:
 def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     try:
-        asyncio.run(Proxy(**config()).serve_forever())
+        cfg = config()   # loads .env first, so DATABASE_URL is set below
+        asyncio.run(Proxy(**cfg, store=events.open_store()).serve_forever())
     except KeyboardInterrupt:
         pass
 
