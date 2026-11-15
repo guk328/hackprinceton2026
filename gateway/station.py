@@ -2,9 +2,10 @@
 
 It also watches for logic tampering: holding 0-4 (and the station's LOGIC_HASH of them)
 must equal the last known good copy, which moves only when the gateway itself lets a write
-through (accept_logic). A difference that lasts TAMPER_CONFIRM_S means the settings were
-changed behind the gateway, and on_tamper(info) is called once for that change. Both the
-values and the hash are checked, so a station that reports a stale hash is caught as well.
+through and then reads it back from the station (accept_logic). A difference that lasts
+TAMPER_CONFIRM_S means the settings were changed behind the gateway, and on_tamper(info) is
+called once for that change. Both the values and the hash are checked, so a station that
+reports a stale hash is caught as well.
 """
 import asyncio
 import logging
@@ -92,9 +93,20 @@ class StationPoller:
             self._task = None
         self._client.close()
 
-    def accept_logic(self, changes: dict[int, int]):
-        """Record allowed writes to holding 0-4 as the new last-known-good."""
-        self.last_good_logic.update({a: v for a, v in changes.items() if a in LOGIC_ADDRS})
+    def accept_logic(self, changes: dict[int, int], snap: StationSnapshot | None = None):
+        """Record allowed writes to holding 0-4 as the new last-known-good, but only those
+        that `snap`, read from the station after the write, shows really landed. A write the
+        station refused or ignored (SAFE_MODE) leaves the copy alone. Returns the addresses
+        that were not confirmed. Without `snap` nothing is recorded."""
+        names = {r.addr: r.name for (k, _), r in self.regs._by_key.items()
+                 if k == "holding_register" and r.addr in LOGIC_ADDRS}
+        landed = {a: v for a, v in changes.items() if a in names and snap is not None
+                  and snap.connected and snap.holding.get(names[a]) == v}
+        self.last_good_logic.update(landed)
+        missed = sorted(a for a in changes if a in names and a not in landed)
+        if missed:
+            log.warning("allowed write to holding %s not seen on the station; last known good unchanged", missed)
+        return missed
 
     async def refresh(self) -> StationSnapshot:
         """Poll now (one poll at a time). On failure the old values stay, connected=False."""

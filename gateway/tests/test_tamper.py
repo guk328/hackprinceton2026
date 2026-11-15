@@ -67,3 +67,24 @@ def test_second_different_tamper_is_reported_again(station, g):
     assert g.wait(lambda: len(tampers(g)) == 1, timeout=5)
     poke.write("holding", 2, 300, HOST, station.port)
     assert g.wait(lambda: len(tampers(g)) == 2, timeout=5)
+
+
+def test_last_known_good_moves_only_after_a_read_back(station, g):
+    """Review finding 5: in SAFE_MODE the station ignores setting writes, but an allowed one
+    still became "last known good", so a later revert would have pushed it."""
+    poke.write("coil", 3, 1, HOST, station.port)               # safe mode, set on site
+    poke.write("holding", 0, 35, HOST, g.proxy.port)           # allowed (the model: no effect)
+    poke.write("holding", 1, 900, HOST, g.proxy.port)
+    assert on_station(station, "holding_register", 0) == 10    # the station ignored both
+    assert g.proxy.poller.last_good_logic[0] == 10 and g.proxy.poller.last_good_logic[1] == 850
+    import time
+    time.sleep(1.2)
+    assert tampers(g) == []                                    # and nothing looks tampered
+
+
+def test_accept_logic_needs_a_snapshot_that_shows_the_value(station, g):
+    poller = g.proxy.poller
+    snap = g.on(poller.refresh())
+    assert poller.accept_logic({0: 99}) == [0]                 # no read-back: not recorded
+    assert poller.accept_logic({0: 99}, snap) == [0]           # the station says 10
+    assert poller.accept_logic({0: 10, 1: 850}, snap) == [] and poller.last_good_logic[0] == 10

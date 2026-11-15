@@ -318,8 +318,9 @@ class Proxy:
                                 s_writer.write(frame.raw)
                                 await s_writer.drain()
                                 await self._settled(pending, frame, relay)
-                                self.poller.accept_logic(   # allowed settings are the new baseline
-                                    {w.address: w.value for w in writes if w.kind == "register"})
+                                settings = {w.address: w.value for w in writes if w.kind == "register"}
+                                if settings:   # the new baseline is what the station now holds
+                                    self.poller.accept_logic(settings, await self.poller.refresh())
                                 continue
                     else:
                         verdict = DENY

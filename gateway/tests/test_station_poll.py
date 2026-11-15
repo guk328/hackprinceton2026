@@ -93,7 +93,11 @@ def test_accept_logic_updates_last_good():
             await p.start()
             try:
                 assert await wait_for(lambda: p.snapshot.connected)
-                p.accept_logic({1: 800})
+                assert p.accept_logic({1: 800}) == [1]          # not read back: not recorded
+                assert p.last_good_logic[1] == 850
+                import dataclasses
+                seen = dataclasses.replace(p.snapshot, holding=dict(p.snapshot.holding, LEVEL_HIGH_SP=800))
+                assert p.accept_logic({1: 800}, seen) == []     # the station shows it
                 assert p.last_good_logic[1] == 800
             finally:
                 await p.close()

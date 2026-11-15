@@ -108,8 +108,9 @@ def release(event_id: str, *, held, channel, writer, refresh, store=None, poller
         reply = writer.forward(cmd.frame.raw)
         if len(reply) > 7 and reply[7] & 0x80:
             return {"released": False, "error": f"station answered exception {reply[8]:#04x}"}
-        if poller is not None:
-            poller.accept_logic({w.address: w.value for w in cmd.writes if w.kind == "register"})
+        settings = {w.address: w.value for w in cmd.writes if w.kind == "register"}
+        if poller is not None and settings:      # read back: only what landed is the new baseline
+            poller.accept_logic(settings, refresh())
         if store is not None:
             store.save_agent_step(event_id, "released", "Held command forwarded to the station")
         return {"released": True, "event_id": event_id,
