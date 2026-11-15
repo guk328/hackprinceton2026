@@ -15,6 +15,7 @@ class FakeModel(BaseChatModel):
     prompts: list = []        # the message lists the model was sent
     tools_seen: list = []     # tool names offered at the last bind
     usage: dict = {"input_tokens": 1000, "output_tokens": 100, "total_tokens": 1100}
+    delay_s: float = 0.0      # per call, to test time limits
 
     @property
     def _llm_type(self):
@@ -28,6 +29,9 @@ class FakeModel(BaseChatModel):
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         self.prompts.append(list(messages))
+        if self.delay_s:
+            import time
+            time.sleep(self.delay_s)
         m = self.script.pop(0) if self.script else AIMessage(content="Nothing more to do.")
         if isinstance(m, BaseException):
             raise m

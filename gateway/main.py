@@ -1,4 +1,5 @@
-"""The whole gateway in one process: proxy (:GATEWAY_PORT), station poller and API (:API_PORT).
+"""The whole gateway in one process: proxy (:GATEWAY_PORT), station poller, API (:API_PORT)
+and the incident runner (agent, operator channel).
 
 Run: python -m gateway.main   (or: python tasks.py gateway)
 """
@@ -9,24 +10,65 @@ import os
 import uvicorn
 
 from gateway import events
+from gateway.agent.budget import Budget
+from gateway.agent.runner import Runner
+from gateway.agent.tools_act import make_action_tools, release
+from gateway.agent.tools_read import make_read_tools
 from gateway.api import create_app
+from gateway.blocklist import Blocklist
+from gateway.notify import OperatorChannel
 from gateway.proxy import Proxy, config
 from gateway.station import StationPoller
+from gateway.station_write import StationWriter
+
+log = logging.getLogger("gateway.main")
+
+
+def build(cfg: dict, store, loop) -> dict:
+    """Wire the parts. The agent is optional: without AGENT_MODEL (or if it cannot be
+    built) the runner still texts the operator with a templated message."""
+    poller = StationPoller(cfg["station_host"], cfg["station_port"])
+    blocklist = Blocklist()
+    proxy = Proxy(**cfg, poller=poller, store=store, blocklist=blocklist)
+    channel = OperatorChannel(store)
+    writer = StationWriter(cfg["station_host"], cfg["station_port"])
+    budget = Budget(store)
+
+    def refresh():   # called from agent worker threads
+        return asyncio.run_coroutine_threadsafe(poller.refresh(), loop).result(5)
+
+    kit = dict(held=proxy.held, channel=channel, writer=writer, refresh=refresh,
+               store=store, poller=poller)
+
+    def make_agent():
+        from gateway.agent.build import INTERRUPT_ON, build_agent
+        tools = make_read_tools(store, poller) + make_action_tools(
+            store, poller, blocklist, channel, writer, held=proxy.held, refresh=refresh)
+        return build_agent(tools, budget=budget, interrupt_on=INTERRUPT_ON)
+
+    runner = Runner(store, channel, blocklist, budget=budget, held=proxy.held,
+                    make_agent=make_agent if os.getenv("AGENT_MODEL") else None,
+                    release=lambda event_id: release(event_id, **kit))
+    return dict(poller=poller, proxy=proxy, channel=channel, runner=runner, budget=budget,
+                blocklist=blocklist)
 
 
 async def run(cfg: dict, api_host: str, api_port: int):
     store = events.open_store()
-    poller = StationPoller(cfg["station_host"], cfg["station_port"])
-    await poller.start()
-    proxy = Proxy(**cfg, poller=poller, store=store)
-    await proxy.start()
-    app = create_app(store, poller, proxy._station_view)
+    g = build(cfg, store, asyncio.get_running_loop())
+    await g["poller"].start()
+    await g["proxy"].start()
+    await g["runner"].start()
+    log.info("agent model: %s, spend so far $%.4f of $%.2f", os.getenv("AGENT_MODEL") or "none",
+             g["budget"].spent(), g["budget"].ceiling)
+    app = create_app(store, g["poller"], g["proxy"]._station_view, channel=g["channel"])
     server = uvicorn.Server(uvicorn.Config(app, host=api_host, port=api_port, log_level="info"))
     try:
         await server.serve()
     finally:
-        await proxy.close()
-        await poller.close()
+        await g["runner"].close()
+        await g["proxy"].close()
+        await g["poller"].close()
         store.close()
 
 

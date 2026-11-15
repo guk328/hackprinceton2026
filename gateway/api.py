@@ -6,14 +6,15 @@
     GET  /stream            server-sent events: "event" for every new event (no trajectory),
                             "agent" for every agent step and operator text
     GET  /agent/log         stored agent steps, oldest first, ?limit=200
-    POST /operator/reply    {"reply": "ALLOW"|"BLOCK", "event_id": "evt_0042"} -> inbox queue
+    GET  /operator/inbox    the operator's "phone": texts with their one-time codes
+    POST /operator/reply    {"reply": "ALLOW"|"BLOCK", "event_id": "evt_0042", "code": "123456"}
+                            202 if the code verifies (gateway/notify.py), else 403
     GET  /reports/{id}      gateway/reports/<id>.md as text
     GET  /                  dashboard/ (static, mounted last so the routes above win)
 
-Read-only except /operator/reply, which only queues an answer for the agent runner
-(a later step); nothing here writes to the station or touches the allow/hold path.
+Read-only except /operator/reply, which hands a verified answer to the operator channel;
+nothing here writes to the station or touches the allow/hold path.
 """
-import asyncio
 import dataclasses
 import re
 from pathlib import Path
@@ -23,7 +24,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from gateway.events import EventStore
 
@@ -33,8 +34,10 @@ EVENT_ID = re.compile(r"^evt_\d{4,}$")
 
 
 class OperatorReply(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
     reply: Literal["ALLOW", "BLOCK"]
-    event_id: str | None = None
+    event_id: str = Field(pattern=r"^evt_\d{4,12}$")
+    code: str = Field(pattern=r"^\d{6}$")
 
 
 def slim(event: dict) -> dict:
@@ -45,12 +48,12 @@ def slim(event: dict) -> dict:
     return event
 
 
-def create_app(store: EventStore, poller=None, station_view=None,
+def create_app(store: EventStore, poller=None, station_view=None, channel=None,
                reports_dir: Path = REPORTS_DIR, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
     """`poller` is a StationPoller (or None: /state reports not connected);
     `station_view` turns its snapshot into the README 4.4 station object."""
     app = FastAPI(title="Backflow gateway")
-    app.state.operator_replies = asyncio.Queue()   # drained by the agent runner (step 21+)
+    app.state.channel = channel
 
     @app.get("/events")
     def list_events(limit: int = Query(100, ge=1, le=1000)):
@@ -91,11 +94,17 @@ def create_app(store: EventStore, poller=None, station_view=None,
         return store.list_agent_steps(limit)
 
     @app.post("/operator/reply", status_code=202)
-    async def operator_reply(body: OperatorReply):
-        if body.event_id is not None and store.get_event(body.event_id) is None:
-            raise HTTPException(404, f"no event {body.event_id}")
-        await app.state.operator_replies.put(body.model_dump())
+    def operator_reply(body: OperatorReply):
+        if channel is None:
+            raise HTTPException(503, "no operator channel")
+        ok, why = channel.reply(body.event_id, body.reply, body.code)
+        if not ok:
+            raise HTTPException(403, why)
         return {"accepted": True}
+
+    @app.get("/operator/inbox")
+    def operator_inbox():
+        return channel.inbox() if channel is not None else []
 
     @app.get("/reports/{event_id}", response_class=PlainTextResponse)
     def report(event_id: str):

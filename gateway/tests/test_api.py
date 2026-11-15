@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from gateway.api import create_app
 from gateway.events import EventStore
+from gateway.notify import OperatorChannel
 from gateway.station import StationSnapshot
 from test_events import EVENT
 
@@ -29,7 +30,8 @@ def store():
 @pytest.fixture
 def client(store, tmp_path):
     (tmp_path / "evt_0001.md").write_text("# report\n")
-    app = create_app(store, FakePoller(), lambda snap: {"presence": False}, reports_dir=tmp_path)
+    app = create_app(store, FakePoller(), lambda snap: {"presence": False},
+                     channel=OperatorChannel(store), reports_dir=tmp_path)
     return TestClient(app)
 
 
@@ -54,12 +56,22 @@ def test_state(client):
     assert s["station"] == {"presence": False}
 
 
-def test_operator_reply(client, store):
+def test_operator_reply_needs_the_one_time_code(client, store):
     store.save_event(EVENT)
-    assert client.post("/operator/reply", json={"reply": "BLOCK", "event_id": "evt_0001"}).status_code == 202
-    assert client.app.state.operator_replies.get_nowait() == {"reply": "BLOCK", "event_id": "evt_0001"}
-    assert client.post("/operator/reply", json={"reply": "MAYBE"}).status_code == 422
-    assert client.post("/operator/reply", json={"reply": "ALLOW", "event_id": "evt_9999"}).status_code == 404
+    channel = client.app.state.channel
+    channel.send("evt_0001", "Held. Reply BLOCK or ALLOW")
+    (msg,) = client.get("/operator/inbox").json()
+    body = {"reply": "BLOCK", "event_id": "evt_0001", "code": msg["code"]}
+    wrong = "000000" if msg["code"] != "000000" else "111111"
+    assert client.post("/operator/reply", json={**body, "code": wrong}).status_code == 403
+    assert client.post("/operator/reply", json={"reply": "BLOCK", "event_id": "evt_0001"}).status_code == 422
+    assert client.post("/operator/reply", json={**body, "reply": "MAYBE"}).status_code == 422
+    assert client.post("/operator/reply", json={**body, "extra": 1}).status_code == 422
+    assert client.post("/operator/reply", json={**body, "event_id": "evt_9999"}).status_code == 403
+    assert channel.decision("evt_0001") is None
+    assert client.post("/operator/reply", json=body).status_code == 202
+    assert channel.decision("evt_0001") == "BLOCK"
+    assert client.post("/operator/reply", json=body).status_code == 403      # single use
 
 
 def test_reports(client):
