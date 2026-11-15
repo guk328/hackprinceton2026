@@ -1,6 +1,11 @@
 """decide(): the allow/hold/deny rule for one write. Deterministic, no LLM, fails closed.
 
 Every check runs and every reason is kept; the strictest verdict wins (DENY > HOLD > ALLOW).
+
+Two kinds of check. SAFETY_CHECKS (register known, envelope, SAFE_MODE rule, physics) can
+never be overridden by anyone. APPROVAL_CHECKS hold a write that is safe but unusual until
+the operator says ALLOW. decide(release=True) is the re-check before a held command is
+forwarded: it runs the safety checks only, on fresh station state.
 """
 import os
 import time
@@ -123,11 +128,31 @@ def check_physics(req: WriteRequest, reg: Register | None, station: StationSnaps
     return (HOLD if reasons else ALLOW), reasons, p
 
 
-CHECKS = [check_known, check_envelope, check_safe_mode_clear, check_physics]
+LARGE_STEP_FRACTION = 0.25   # of the register's envelope (max - min)
+
+
+def check_large_change(req: WriteRequest, reg: Register | None, station: StationSnapshot):
+    """A big jump in a control setting waits for the operator even when the model says it
+    is safe (scenario 5). The operator's ALLOW overrides this, and only this."""
+    if reg is None or reg.kind != "holding_register" or reg.min is None or reg.max is None:
+        return ALLOW, []
+    old = station.holding.get(reg.name)
+    if old is None:
+        return ALLOW, []   # unknown state: the physics check holds
+    limit = LARGE_STEP_FRACTION * (reg.max - reg.min)
+    if abs(req.value - old) > limit:
+        return HOLD, [f"{reg.name} {old} -> {req.value} is a large step (over {limit:g}): "
+                      "needs operator approval"]
+    return ALLOW, []
+
+
+SAFETY_CHECKS = [check_known, check_envelope, check_safe_mode_clear, check_physics]
+APPROVAL_CHECKS = [check_large_change]
+CHECKS = SAFETY_CHECKS + APPROVAL_CHECKS
 
 
 def decide(req: WriteRequest, station: StationSnapshot, *,
-           regs: RegisterMap | None = None) -> Decision:
+           regs: RegisterMap | None = None, release: bool = False) -> Decision:
     global _regs
     if regs is None:
         regs = _regs = _regs or load_registers()
@@ -137,7 +162,7 @@ def decide(req: WriteRequest, station: StationSnapshot, *,
         return Decision(ALLOW)
 
     verdict, reasons, prediction = ALLOW, [], None
-    for check in CHECKS:  # no early exit: collect every reason
+    for check in (SAFETY_CHECKS if release else CHECKS):  # no early exit: collect every reason
         try:
             v, why, *extra = check(req, reg, station)
         except Exception as e:  # a broken check must not become permission
@@ -147,6 +172,8 @@ def decide(req: WriteRequest, station: StationSnapshot, *,
             prediction = extra[0]
         if _RANK[v] > _RANK[verdict]:
             verdict = v
+    if release:           # the operator has already weighed who, when and how big
+        return Decision(verdict, reasons, prediction)
     ctx = context_reasons(req, station)
     if verdict != ALLOW:
         reasons += ctx

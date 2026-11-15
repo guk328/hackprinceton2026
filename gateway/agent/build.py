@@ -28,6 +28,8 @@ MAX_OUTPUT_TOKENS = 1200     # per model call
 MAX_MODEL_CALLS = 14         # per run (start, resume and tell are each a run)
 MODEL_TIMEOUT_S = 40
 STEP_TEXT_MAX = 600
+# The run pauses at this tool until the operator answers; they can only say yes or no.
+INTERRUPT_ON = {"release_held_command": {"allowed_decisions": ["approve", "reject"]}}
 
 
 def make_model(name: str | None = None):

@@ -100,7 +100,7 @@ def test_every_reason_is_collected(monkeypatch):
     monkeypatch.setattr(policy, "CHECKS", [*policy.CHECKS, extra])
     d = decide(reg(0, 500), snap())
     assert d.decision == HOLD
-    assert "last check" in d.reasons and len(d.reasons) == 3 + 2  # + 2 context reasons
+    assert "last check" in d.reasons and len(d.reasons) == 4 + 2  # + 2 context reasons
     assert "above max" in d.reasons[0] and d.reasons[1].startswith("SETPOINT_OUT_OF_RANGE")
 
 
@@ -167,3 +167,13 @@ def test_write_rate_per_source():
         held()
     assert any("writes in" in r for r in held().reasons)
     assert not any("writes in" in r for r in held(src="198.51.100.9").reasons)
+
+
+def test_large_step_is_held_for_approval_and_release_skips_only_that():
+    d = decide(reg(0, 40), snap())                       # safe per physics, but a big jump
+    assert d.decision == HOLD and any("large step" in r for r in d.reasons)
+    assert decide(reg(0, 30), snap()).decision == ALLOW  # within the step limit
+    assert decide(reg(0, 40), snap(), release=True).decision == ALLOW
+    assert decide(reg(0, 500), snap(), release=True).decision == HOLD      # envelope still holds
+    assert decide(coil(3, 0), snap(), release=True).decision == HOLD       # SAFE_MODE rule too
+    assert decide(reg(101, 5), snap(), release=True).decision == DENY      # twin-only too

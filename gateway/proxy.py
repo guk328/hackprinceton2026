@@ -156,7 +156,7 @@ class Proxy:
         """One event for one write (or for a frame that carries none, like an unknown
         function code). `verdict` is what happened to the whole frame."""
         if self.store is None:
-            return
+            return None
         reasons = list(d.reasons)
         if d.decision != verdict:
             reasons.append(f"frame {verdict.lower()} because another write in it was {verdict}")
@@ -164,7 +164,7 @@ class Proxy:
         if req and req.name:
             old = (before.coils if req.kind == "coil" else before.holding).get(req.name)
         try:
-            self.store.save_event({
+            return self.store.save_event({
                 "src_ip": src, "function": fc,
                 "kind": req.kind if req else None, "address": req.address if req else None,
                 "name": req.name if req else None,
@@ -172,13 +172,14 @@ class Proxy:
                 "new_value": req.value if req else None,
                 "decision": verdict, "reasons": reasons,
                 "prediction": events.prediction_json(d.prediction),
-                "station": self._station_view(before)}, traffic_id=frame_row)
+                "station": self._station_view(before)}, traffic_id=frame_row)["id"]
         except Exception:
             log.exception("could not store an event")
+            return None
 
-    async def _decide_frame(self, writes, src=None, frame_row=None) -> tuple[str, list[Decision]]:
+    async def _decide_frame(self, writes, src=None, frame_row=None):
         """Strictest verdict over every write in the frame. Anything that goes
-        wrong while deciding is a HOLD."""
+        wrong while deciding is a HOLD. Returns (verdict, decisions, event ids)."""
         station = await self.poller.refresh()
         verdict, decisions, befores = ALLOW, [], []
         for req in writes:
@@ -194,13 +195,14 @@ class Proxy:
             if rank > STRICTNESS.index(verdict):
                 verdict = d.decision
             station = with_write(station, req)
-        for req, d, before in zip(writes, decisions, befores):
-            self._save_event(src or req.src_ip, req.fc, req, d, verdict, before, frame_row)
-        return verdict, decisions
+        ids = [self._save_event(src or req.src_ip, req.fc, req, d, verdict, before, frame_row)
+               for req, d, before in zip(writes, decisions, befores)]
+        return verdict, decisions, ids
 
-    def _refuse(self, src, c_writer, frame: Frame, writes, verdict, decisions):
+    def _refuse(self, src, c_writer, frame: Frame, writes, verdict, decisions, event_ids=()):
         """Answer a frame that is not forwarded. Only HOLD is kept for release."""
-        held = self.held.add(src, frame, writes, decisions) if verdict == HOLD else None
+        held = (self.held.add(src, frame, writes, decisions, event_ids)
+                if verdict == HOLD else None)
         log.warning("%s %s tid=%d fc=%d id=%s reasons=%s", src, verdict, frame.tid, frame.fc,
                     held.id if held else None, [r for d in decisions for r in d.reasons])
         self._reply_exception(src, c_writer, frame, EXC_HOLD if verdict == HOLD else EXC_DENY)
@@ -260,7 +262,7 @@ class Proxy:
                         continue
                     if writes:
                         async with self._write_lock:
-                            verdict, decisions = await self._decide_frame(writes, src, frame_row)
+                            verdict, decisions, ids = await self._decide_frame(writes, src, frame_row)
                             if verdict == ALLOW:   # the only line that sends a write
                                 pending[frame.tid] = frame
                                 s_writer.write(frame.raw)
@@ -272,9 +274,9 @@ class Proxy:
                     else:
                         verdict = DENY
                         decisions = [Decision(DENY, [f"function code {frame.fc} is not allowed"])]
-                        self._save_event(src, frame.fc, None, decisions[0], DENY,
-                                         self.poller.snapshot, frame_row)
-                    self._refuse(src, c_writer, frame, writes or [], verdict, decisions)
+                        ids = [self._save_event(src, frame.fc, None, decisions[0], DENY,
+                                                self.poller.snapshot, frame_row)]
+                    self._refuse(src, c_writer, frame, writes or [], verdict, decisions, ids)
                     await c_writer.drain()
         except FrameError as e:
             log.warning("%s unparseable frame, closing client: %s", src, e)
