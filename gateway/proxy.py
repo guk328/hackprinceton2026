@@ -11,7 +11,8 @@ coil/register in the frame; otherwise nothing is sent to the station.
 One write is judged at a time, against station state read just before, and the
 next one waits for the station's answer to it. One upstream connection per
 client. Unparseable bytes close that client only. If the station is down the
-client gets Modbus exception 0x0B and the next client retries.
+client gets Modbus exception 0x0B and the next client retries. A source on the
+blocklist is disconnected before anything it sends is parsed.
 
 Run: python -m gateway.proxy   (or: python tasks.py gateway)
 """
@@ -24,6 +25,7 @@ from dataclasses import replace
 from dotenv import load_dotenv
 
 from gateway import events, policy
+from gateway.blocklist import Blocklist
 from gateway.frames import (WRITE_FCS, Frame, FrameBuffer, FrameError, WriteRequest,
                             decode_write, exception_reply)
 from gateway.events import EventStore
@@ -93,7 +95,7 @@ class Proxy:
     def __init__(self, station_host="127.0.0.1", station_port=5020,
                  host="0.0.0.0", port=1502, regs=None, connect_timeout=3.0,
                  poller: StationPoller | None = None, held: HeldStore | None = None,
-                 store: EventStore | None = None):
+                 store: EventStore | None = None, blocklist: Blocklist | None = None):
         self.station = (station_host, station_port)
         self.host, self.port = host, port
         self.regs = regs or load_registers()
@@ -102,6 +104,7 @@ class Proxy:
         self._own_poller = poller is None
         self.held = held or HeldStore()
         self.store = store               # None: nothing is persisted (log lines only)
+        self.blocklist = blocklist or Blocklist()
         self._write_lock = asyncio.Lock()   # one write decided and settled at a time
         self._server: asyncio.Server | None = None
         self._tasks: set[asyncio.Task] = set()
@@ -224,6 +227,10 @@ class Proxy:
 
     async def _handle(self, c_reader, c_writer):
         src = (c_writer.get_extra_info("peername") or ("?",))[0]
+        if self.blocklist.is_blocked(src):
+            log.warning("%s is blocked, connection dropped", src)
+            c_writer.close()
+            return
         pending: dict[int, Frame] = {}   # tid -> request awaiting its reply
         s_writer = relay = None
         try:
@@ -236,6 +243,9 @@ class Proxy:
 
             buf = FrameBuffer()
             while data := await c_reader.read(4096):
+                if self.blocklist.is_blocked(src):     # blocked while connected
+                    log.warning("%s is blocked, connection dropped", src)
+                    return
                 for frame in buf.feed(data):
                     writes = decode_write(frame, src, self.regs) if frame.fc in WRITE_FCS else None
                     frame_row = self._record(src, C2S, frame, writes=writes)
@@ -256,6 +266,8 @@ class Proxy:
                                 s_writer.write(frame.raw)
                                 await s_writer.drain()
                                 await self._settled(pending, frame, relay)
+                                self.poller.accept_logic(   # allowed settings are the new baseline
+                                    {w.address: w.value for w in writes if w.kind == "register"})
                                 continue
                     else:
                         verdict = DENY
