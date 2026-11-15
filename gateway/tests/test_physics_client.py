@@ -23,9 +23,11 @@ def readme_state(**over):
                    level_high_sp=85.0, level_low_sp=40.0, auto_mode=True), **over)
 
 
-def high(pre_existing=False):
+def high(pre_existing=False, baseline=None):
+    """`baseline` defaults to the same time: the command changes nothing about it."""
     return Violation(code="CHLORINE_HIGH", minutes_until=11.4, value=4.0, limit=4.0,
-                     pre_existing=pre_existing, message="Chlorine exceeds 4.0 mg/L")
+                     pre_existing=pre_existing, message="Chlorine exceeds 4.0 mg/L",
+                     baseline_minutes_until=(11.4 if baseline is None else baseline) if pre_existing else None)
 
 
 # --- the stub matches README 4.3 ---------------------------------------------------------
@@ -49,7 +51,8 @@ def test_signatures():
     assert [f.name for f in dataclasses.fields(PlantState)] == README_FIELDS
     assert [f.name for f in dataclasses.fields(Command)] == ["kind", "address", "value"]
     assert {f.name for f in dataclasses.fields(Violation)} == {
-        "code", "minutes_until", "value", "limit", "pre_existing", "message"}
+        "code", "minutes_until", "value", "limit", "pre_existing", "message",
+        "baseline_minutes_until"}      # additive, as in the real model: decide() compares with it
     assert {f.name for f in dataclasses.fields(Prediction)} == {"safe", "violations", "trajectory"}
 
 
@@ -282,3 +285,36 @@ def test_real_check_latency(req):
     runs.sort()
     assert runs[0] < 0.09, runs
     assert runs[len(runs) // 2] < pc.DEFAULT_TIMEOUT_S, runs
+
+
+# ---- pre_existing only excuses a violation the command does not bring sooner or worsen ----
+
+def test_pre_existing_violation_made_earlier_is_held(monkeypatch):
+    """Review finding 1: CHLORINE_HIGH moved from 91 to 66 min was allowed."""
+    v = dataclasses.replace(high(pre_existing=True, baseline=91.5), minutes_until=65.8)
+    p = Prediction(safe=False, violations=[v], trajectory=[])
+    monkeypatch.setattr(pc, "predict", lambda state, cmd, horizon_min=120: p)
+    d = decide(reg(1, 800), snap())
+    assert d.decision == HOLD and d.reasons[0] == "CHLORINE_HIGH in 66 min (92 min without this command)"
+    assert d.prediction.violations[0].pre_existing is False       # the event shows it as the command's
+
+
+def test_pre_existing_violation_without_a_baseline_time_is_held(monkeypatch):
+    v = dataclasses.replace(high(pre_existing=True), baseline_minutes_until=None)
+    p = Prediction(safe=False, violations=[v], trajectory=[])
+    monkeypatch.setattr(pc, "predict", lambda state, cmd, horizon_min=120: p)
+    assert decide(reg(1, 800), snap()).decision == HOLD
+
+
+@pytest.mark.skipif(not pc.USING_REAL_PHYSICS, reason="needs the real physics package")
+def test_real_model_overdose_brought_forward_is_held_and_no_change_is_not():
+    h = dict(snap().holding, DOSER_RATE_PCT=85, CHLORINE_MGL=250)     # already heading over 4 mg/L
+    d = decide(reg(0, 100), snap(holding=h))
+    assert d.decision == HOLD and any(r.startswith("CHLORINE_HIGH in 66 min (") for r in d.reasons), d.reasons
+    # pump off in manual, tank falling: a setpoint the station is not using changes nothing
+    s = snap(coils=dict(snap().coils, AUTO_MODE=0, PUMP_CMD=0),
+             holding=dict(snap().holding, TANK_LEVEL_PCT=300),
+             input_registers=dict(snap().input_registers, DEMAND_PCT=600))
+    d = decide(reg(2, 300), s)
+    assert d.decision == ALLOW, d.reasons
+    assert {v.code for v in d.prediction.violations} >= {"PRESSURE_LOSS"}

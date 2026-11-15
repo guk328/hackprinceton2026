@@ -36,6 +36,7 @@ class Violation:
     limit: float
     message: str
     pre_existing: bool = False
+    baseline_minutes_until: float | None = None   # when the same limit breaks with no command
 
 
 @dataclass(frozen=True)
@@ -71,10 +72,10 @@ def _violations(state: PlantState) -> list:
 def predict(state, cmd, horizon_min=120):
     """Stub forecast: pure, fast, never raises. Unusable input comes back unsafe."""
     try:
-        before = {v.code for v in _violations(state)}
+        before = {v.code: v.minutes_until for v in _violations(state)}
         after = _apply(state, cmd)
-        found = [replace(v, pre_existing=v.code in before) for v in _violations(after)
-                 if v.minutes_until <= horizon_min]
+        found = [replace(v, pre_existing=v.code in before, baseline_minutes_until=before.get(v.code))
+                 for v in _violations(after) if v.minutes_until <= horizon_min]
         return Prediction(safe=not found, violations=found, trajectory=[
             (0.0, after.level_pct, after.chlorine_mgl),
             (float(horizon_min), after.level_pct, after.chlorine_mgl)])

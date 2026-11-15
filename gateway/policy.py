@@ -10,7 +10,7 @@ forwarded: it runs the safety checks only, on fresh station state.
 import os
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 
 from gateway import physics_client
@@ -112,8 +112,32 @@ def check_safe_mode_clear(req: WriteRequest, reg: Register | None, station: Stat
     return ALLOW, []
 
 
+# Limits a trajectory can overshoot: code -> (trajectory column, +1 above / -1 below the limit).
+_EXTREME = {"CHLORINE_HIGH": (2, 1), "CHLORINE_LOW": (2, -1),
+            "TANK_OVERFLOW": (1, 1), "PRESSURE_LOSS": (1, -1)}
+_EPS = 1e-6
+
+
+def worsened(v, p) -> str | None:
+    """A violation the plant is heading for anyway (pre_existing) is not the command's
+    fault, unless the command brings it sooner or pushes further past the limit. Returns
+    why it counts against the command, or None. Not being able to compare counts."""
+    base = getattr(v, "baseline_minutes_until", None)
+    if base is None:
+        return "no baseline to compare with"
+    if v.minutes_until < base - _EPS:
+        return f"{round(base)} min without this command"
+    column, cand, without = _EXTREME.get(v.code), p.trajectory, getattr(p, "baseline_trajectory", None)
+    if column and cand and without:
+        i, sign = column
+        if max(sign * row[i] for row in cand) > max(sign * row[i] for row in without) + _EPS:
+            return "further past the limit than without this command"
+    return None
+
+
 def check_physics(req: WriteRequest, reg: Register | None, station: StationSnapshot):
-    """Any predicted violation the write would cause is a HOLD. So is not knowing."""
+    """Any predicted violation the write would cause, bring sooner or make worse is a HOLD.
+    So is not knowing."""
     if reg is None or reg.twin_only:
         return ALLOW, []  # already denied, and the model has no such register
     try:
@@ -123,8 +147,16 @@ def check_physics(req: WriteRequest, reg: Register | None, station: StationSnaps
     try:
         p = physics_client.check(
             state, physics_client.Command(kind=req.kind, address=req.address, value=req.value))
-        new = [v for v in p.violations if not v.pre_existing]
-        reasons = [f"{v.code} in {round(v.minutes_until)} min" for v in new]
+        reasons, judged = [], []
+        for v in p.violations:
+            why = worsened(v, p) if v.pre_existing else None
+            if why:        # stored as the command's own, so the feed and the report show it
+                v = replace(v, pre_existing=False)
+            if not v.pre_existing:
+                reasons.append(f"{v.code} in {round(v.minutes_until)} min" + (f" ({why})" if why else ""))
+            judged.append(v)
+        if judged != list(p.violations):
+            p = replace(p, violations=judged)
         if not p.safe and not p.violations:
             reasons = ["physics check gave no verdict"]
     except TimeoutError:
