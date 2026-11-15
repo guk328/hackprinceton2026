@@ -81,6 +81,13 @@ class HeldStore:
                 return cmd
         return None
 
+    def describe(self, event_id: str) -> list[str]:
+        """Every write in the frame held for this event, in frame order: exactly what an
+        operator ALLOW would send. Empty if nothing is held for it."""
+        cmd = self.by_event(event_id)
+        return [] if cmd is None else [f"{w.name or f'{w.kind} {w.address}'} = {w.value}"
+                                       for w in cmd.writes]
+
     def pop(self, held_id: str) -> HeldCommand | None:
         cmd = self._items.pop(held_id, None)
         if cmd is not None:

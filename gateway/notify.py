@@ -10,6 +10,10 @@ carries a fresh 6-digit code, tied to its event id, good for one reply and for C
 Five wrong codes void the question (fail closed: nothing is released). A reply never
 releases anything by itself: release still re-runs the safety checks (agent/tools_act.py).
 
+The text may describe one write (the agent or a template wrote it); `covers` is the list of
+every write in the held frame, taken from the frame itself, and is shown with the question so
+the operator sees all of what an ALLOW sends. A real SMS backend must append it to the text.
+
 Backend: the "phone" panel on the dashboard (GET /operator/inbox shows the texts and
 codes, as a phone would). A real SMS backend would send `text + code` and parse
 "ALLOW 123456"; it must use the same reply() so the rules stay in one place.
@@ -19,7 +23,7 @@ import hmac
 import secrets
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 CODE_TTL_S = 15 * 60
 APPROVAL_TTL_S = 5 * 60   # a verified ALLOW that is not used for a release within this is void
@@ -38,12 +42,14 @@ class Question:
     bad: int = 0
     reply: str | None = None      # set once, by a verified reply
     void: bool = False
+    covers: list = field(default_factory=list)   # every write an ALLOW would send
 
 
 class OperatorChannel:
     def __init__(self, store=None, ttl_s: float = CODE_TTL_S, clock=time.time,
-                 approval_ttl_s: float = APPROVAL_TTL_S):
+                 approval_ttl_s: float = APPROVAL_TTL_S, covers=None):
         self.store, self.ttl_s, self._clock = store, ttl_s, clock
+        self.covers = covers      # callable(event_id) -> list[str] (HeldStore.describe), set by the runner
         self.approval_ttl_s = approval_ttl_s
         self._q: dict[str, Question] = {}
         self._approved: dict[str, float] = {}   # event id -> time of the verified ALLOW
@@ -57,20 +63,25 @@ class OperatorChannel:
         if len(text) > MAX_TEXT:
             return {"sent": False, "error": f"text is {len(text)} characters, the limit is {MAX_TEXT}"}
         now = self._clock()
+        try:        # written by plain code from the held frame, whoever wrote the text
+            covers = list(self.covers(event_id)) if self.covers else []
+        except Exception:
+            covers = []
         with self._lock:
             if event_id in self._q:
                 return {"sent": False, "error": "the operator was already texted about this event"}
-            q = Question(event_id, text, f"{secrets.randbelow(10**6):06d}", now, now + self.ttl_s)
+            q = Question(event_id, text, f"{secrets.randbelow(10**6):06d}", now, now + self.ttl_s,
+                         covers=covers)
             self._q[event_id] = q
         if self.store is not None:     # the feed shows the text; the code stays on the "phone"
-            self.store.save_agent_step(event_id, "text", text)
+            self.store.save_agent_step(event_id, "text", text, {"covers": covers} if covers else None)
         return {"sent": True, "event_id": event_id, "characters": len(text)}
 
     def inbox(self) -> list[dict]:
         """What the operator's phone shows, oldest first."""
         now = self._clock()
         with self._lock:
-            return [{"event_id": q.event_id, "text": q.text, "code": q.code, "ts": q.ts,
+            return [{"event_id": q.event_id, "text": q.text, "covers": q.covers, "code": q.code, "ts": q.ts,
                      "expires_in_s": max(0, round(q.expires - now)), "reply": q.reply,
                      "open": q.reply is None and not q.void and q.expires > now}
                     for q in self._q.values()]

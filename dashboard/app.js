@@ -123,6 +123,7 @@ function renderInbox(list) {
     const box = el("div", "sms");
     box.dataset.id = m.event_id;
     box.append(el("p", "", m.text));
+    if (m.covers && m.covers.length) box.append(el("p", "covers", `ALLOW would send: ${m.covers.join("; ")}`));
     const meta = el("div", "meta");
     meta.append(el("span", "", `${fmtTime(m.ts * 1000)} · ${m.event_id}`));
     if (m.open) meta.append(el("span", "", `reply code ${m.code} · good for ${Math.ceil(m.expires_in_s / 60)} min`));

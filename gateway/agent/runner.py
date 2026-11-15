@@ -89,6 +89,8 @@ class Runner:
     async def start(self):
         self._loop = asyncio.get_running_loop()
         self.channel.on_reply = self._reply_from_any_thread
+        if self.held is not None and self.channel.covers is None:
+            self.channel.covers = self.held.describe   # the question lists every write in the frame
         q = self.store.subscribe()
         self._main = asyncio.create_task(self._consume(q))
         self._reopen_held()

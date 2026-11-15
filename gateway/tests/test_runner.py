@@ -202,3 +202,25 @@ def test_clearing_safe_mode_is_released_by_the_operator_s_allow(station, make):
     assert g.wait(lambda: g.channel.inbox())
     assert g.channel.reply(eid, "ALLOW", g.code(eid))[0]
     assert g.wait(lambda: on_station(station, "coil", 3) == 0)
+
+
+def test_operator_question_lists_every_write_in_the_held_frame(station, make):
+    """Review finding 6: the text named one write, ALLOW released the whole frame."""
+    from test_block import fc16
+    g = make(script=None, debounce_s=30)                     # one incident for the frame's three events
+    assert send(g.proxy.port, fc16(RATE, [45, 800, 450])) == bytes([0x90, EXC_HOLD])   # 10 -> 45: large step
+    assert g.wait(lambda: g.channel.inbox())
+    (msg,) = g.channel.inbox()
+    assert msg["covers"] == ["DOSER_RATE_PCT = 45", "LEVEL_HIGH_SP = 800", "LEVEL_LOW_SP = 450"]
+    step = next(s for s in g.store.list_agent_steps() if s["kind"] == "text")
+    assert step["data"] == {"covers": msg["covers"]}
+
+
+def test_agent_written_question_also_lists_every_write(station, make):
+    from test_block import fc16
+    g = make(script=[call("notify_operator", _id="c", event_id="evt_0001", text=TEXT),
+                     AIMessage(content="Held. evt_0001.")], debounce_s=30)
+    assert send(g.proxy.port, fc16(RATE, [45, 800])) == bytes([0x90, EXC_HOLD])
+    assert g.wait(lambda: g.channel.inbox())
+    (msg,) = g.channel.inbox()
+    assert msg["text"] == TEXT and msg["covers"] == ["DOSER_RATE_PCT = 45", "LEVEL_HIGH_SP = 800"]
