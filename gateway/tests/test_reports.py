@@ -54,7 +54,7 @@ def test_main_agent_delegates_and_the_report_is_served(store, tmp_path):
         AIMessage(content="Final verdict: MALICIOUS. evt_0001, traffic #1. Report written."),
     ])
     agent = build_agent(read + act, model, budget=budget, interrupt_on=INTERRUPT_ON,
-                        subagents=make_subagents(read, make_save_report(store, tmp_path)))
+                        subagents=make_subagents(read, make_save_report(store, tmp_path), forensics=True))
     s = Session(agent, "evt_0001", lambda k, t, d=None: store.save_agent_step("evt_0001", k, t, d))
     assert s.start(store.get_event("evt_0001")) == "done"
     assert (tmp_path / "evt_0001.md").read_text().startswith("# Incident report evt_0001")
@@ -101,3 +101,11 @@ def test_runner_writes_the_report_itself_when_there_is_no_model(station, tmp_pat
         assert eid in text and "blocked" in text and "Operator replied BLOCK" in text
     finally:
         g.close()
+
+
+def test_forensics_is_off_unless_asked_for(store, tmp_path, monkeypatch):
+    read, save = make_read_tools(store, Poller()), make_save_report(store, tmp_path)
+    monkeypatch.delenv("AGENT_FORENSICS", raising=False)
+    assert [s["name"] for s in make_subagents(read, save)] == ["reporter", "general-purpose"]
+    monkeypatch.setenv("AGENT_FORENSICS", "1")
+    assert [s["name"] for s in make_subagents(read, save)] == ["forensics", "reporter", "general-purpose"]

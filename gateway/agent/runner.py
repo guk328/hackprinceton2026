@@ -238,8 +238,8 @@ class Runner:
                         if reply == "ALLOW" else
                         "The operator replied BLOCK (verified). The gateway has blocked the source "
                         "and discarded the held command.")
-                note += (" Then get the timeline from forensics, have the reporter write the "
-                         "incident report, and give your final verdict in three lines."
+                note += (" Then have the reporter write the incident report and give your "
+                         "final verdict in three lines."
                          if self.reports_dir is not None else " Then give your final verdict.")
                 state = await asyncio.wait_for(asyncio.to_thread(
                     self._run, session.tell, eid, note), self.time_limit_s)
