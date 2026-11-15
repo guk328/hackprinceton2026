@@ -21,9 +21,10 @@ log = logging.getLogger(__name__)
 
 
 def make_action_tools(store, poller, blocklist: Blocklist, channel: OperatorChannel,
-                      writer: StationWriter, held=None, refresh=None) -> list:
+                      writer: StationWriter, held=None, refresh=None, lock=None) -> list:
     """`held` is the proxy's HeldStore and `refresh` a callable returning a fresh
-    StationSnapshot; without `held` there is no release tool."""
+    StationSnapshot; without `held` there is no release tool. `lock(fn)` runs fn under the
+    proxy's write lock (Proxy.run_locked)."""
 
     def block_source(ip: str, minutes: int = 60) -> dict:
         """Make the gateway drop every connection from this source IP for `minutes`
@@ -73,23 +74,24 @@ def make_action_tools(store, poller, blocklist: Blocklist, channel: OperatorChan
         the envelope and the physics model first and refuses if it is unsafe now, whatever
         the operator said. Only ask for this when you judge the command legitimate."""
         return release(event_id, held=held, channel=channel, writer=writer, refresh=refresh,
-                       store=store, poller=poller)
+                       store=store, poller=poller, lock=lock)
 
     return tools + [release_held_command]
 
 
-def release(event_id: str, *, held, channel, writer, refresh, store=None, poller=None) -> dict:
+def release(event_id: str, *, held, channel, writer, refresh, store=None, poller=None,
+            lock=None) -> dict:
     """The only path that forwards a held frame. Plain code, in this order, all required:
-    1. the frame is still held, 2. a verified operator ALLOW exists for this event (used up
-    here), 3. every write in it passes policy.decide(release=True) against fresh station
-    state: envelope, SAFE_MODE rule and physics, without the context and approval rules the
-    operator has just overridden. Any failure or error leaves the frame unforwarded."""
-    try:
-        cmd = held.by_event(event_id)
-        if cmd is None:
-            return {"released": False, "error": f"nothing is held for {event_id}"}
-        if not channel.take_approval(event_id):
-            return {"released": False, "error": "no verified operator ALLOW for this event"}
+    1. the frame is still held, 2. a verified operator ALLOW exists for this event, given
+    less than APPROVAL_TTL_S ago (used up here), 3. every write in it passes
+    policy.decide(release=True) against fresh station state: envelope, SAFE_MODE rule and
+    physics, without the context and approval rules the operator has just overridden.
+    Steps 3 and the forward run under the proxy's write lock (`lock`), so no other write can
+    land between the re-check and the forward. Any failure or error leaves the frame
+    unforwarded."""
+    def recheck_and_forward() -> dict:
+        if held.get(cmd.id) is None:
+            return {"released": False, "error": f"{event_id} is no longer held"}
         snap = refresh()
         from gateway.proxy import with_write
         for req in cmd.writes:
@@ -112,6 +114,16 @@ def release(event_id: str, *, held, channel, writer, refresh, store=None, poller
             store.save_agent_step(event_id, "released", "Held command forwarded to the station")
         return {"released": True, "event_id": event_id,
                 "writes": [{"name": w.name, "value": w.value} for w in cmd.writes]}
+
+    try:
+        cmd = held.by_event(event_id)
+        if cmd is None:
+            return {"released": False, "error": f"nothing is held for {event_id}"}
+        if not channel.take_approval(event_id):
+            return {"released": False,
+                    "error": "no verified operator ALLOW for this event (none given, already "
+                             "used, or older than 5 minutes)"}
+        return lock(recheck_and_forward) if lock is not None else recheck_and_forward()
     except Exception as e:
         log.exception("release failed")
         return {"released": False, "error": f"release failed: {e!r}"}

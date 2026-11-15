@@ -107,10 +107,36 @@ class Proxy:
         self.store = store               # None: nothing is persisted (log lines only)
         self.blocklist = blocklist or Blocklist()
         self._write_lock = asyncio.Lock()   # one write decided and settled at a time
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._server: asyncio.Server | None = None
         self._tasks: set[asyncio.Task] = set()
 
+    def run_locked(self, fn, timeout: float = 20.0):
+        """Run fn() in a worker thread while holding the write lock, and return its result.
+        For the release path: no client write can be decided or forwarded between its safety
+        re-check and its forward. Call it from a worker thread, never from the event loop.
+        Raises if the proxy is not running, the lock is not free within `timeout`, or fn raises."""
+        if self._loop is None:
+            raise RuntimeError("proxy is not running")
+        try:
+            on_loop = asyncio.get_running_loop() is self._loop
+        except RuntimeError:
+            on_loop = False
+        if on_loop:
+            raise RuntimeError("run_locked must be called from a worker thread")
+
+        async def locked():
+            async with self._write_lock:
+                return await asyncio.to_thread(fn)
+        fut = asyncio.run_coroutine_threadsafe(locked(), self._loop)
+        try:
+            return fut.result(timeout)
+        except TimeoutError:
+            fut.cancel()
+            raise
+
     async def start(self):
+        self._loop = asyncio.get_running_loop()
         if self.poller is None:
             self.poller = StationPoller(*self.station, regs=self.regs)
         if self.poller.on_tamper is None:

@@ -2,7 +2,8 @@
 
     channel.send(event_id, text) -> {"sent": True, ...}       the text, with a one-time code
     channel.reply(event_id, "ALLOW"|"BLOCK", code) -> (ok, why)
-    channel.take_approval(event_id) -> bool                   consumed by a release, once
+    channel.take_approval(event_id) -> bool                   consumed by a release, once, and
+                                                              only within APPROVAL_TTL_S of the ALLOW
 
 Why a code: texts are easy to forge, so a bare "ALLOW" proves nothing. Each question
 carries a fresh 6-digit code, tied to its event id, good for one reply and for CODE_TTL_S.
@@ -21,6 +22,7 @@ import time
 from dataclasses import dataclass
 
 CODE_TTL_S = 15 * 60
+APPROVAL_TTL_S = 5 * 60   # a verified ALLOW that is not used for a release within this is void
 MAX_BAD_CODES = 5
 MAX_TEXT = 320
 REPLIES = ("ALLOW", "BLOCK")
@@ -39,10 +41,12 @@ class Question:
 
 
 class OperatorChannel:
-    def __init__(self, store=None, ttl_s: float = CODE_TTL_S, clock=time.time):
+    def __init__(self, store=None, ttl_s: float = CODE_TTL_S, clock=time.time,
+                 approval_ttl_s: float = APPROVAL_TTL_S):
         self.store, self.ttl_s, self._clock = store, ttl_s, clock
+        self.approval_ttl_s = approval_ttl_s
         self._q: dict[str, Question] = {}
-        self._approved: set[str] = set()
+        self._approved: dict[str, float] = {}   # event id -> time of the verified ALLOW
         self._lock = threading.Lock()
         self.on_reply = None      # callable(event_id, reply), set by the runner
 
@@ -92,7 +96,7 @@ class OperatorChannel:
                 return False, "wrong code"
             q.reply = reply
             if reply == "ALLOW":
-                self._approved.add(event_id)
+                self._approved[event_id] = self._clock()
         if self.store is not None:
             self.store.save_agent_step(event_id, "reply", f"Operator replied {reply}")
         if self.on_reply:
@@ -105,12 +109,11 @@ class OperatorChannel:
             return q.reply if q else None
 
     def take_approval(self, event_id: str) -> bool:
-        """True once per verified ALLOW. A release consumes it."""
+        """True once per verified ALLOW, and only within approval_ttl_s of it. A release
+        consumes it; an expired one is dropped and releases nothing."""
         with self._lock:
-            if event_id in self._approved:
-                self._approved.discard(event_id)
-                return True
-            return False
+            given = self._approved.pop(event_id, None)
+            return given is not None and self._clock() - given <= self.approval_ttl_s
 
     def clear(self) -> None:
         with self._lock:

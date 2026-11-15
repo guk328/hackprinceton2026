@@ -15,6 +15,7 @@ from sim import poke
 from test_block import RATE, PUMP, fc6, on_station, send
 from test_proxy import HOST, station  # noqa: F401 (fixture)
 import threading
+import time
 
 
 @pytest.fixture
@@ -28,7 +29,7 @@ def gw(station):
     channel = OperatorChannel(store)
     refresh = lambda: asyncio.run_coroutine_threadsafe(p.poller.refresh(), loop).result(5)  # noqa: E731
     tools = make_action_tools(store, p.poller, p.blocklist, channel,
-                              StationWriter(HOST, station.port), held=p.held, refresh=refresh)
+                              StationWriter(HOST, station.port), held=p.held, refresh=refresh, lock=p.run_locked)
     yield p, store, channel, tools
     asyncio.run_coroutine_threadsafe(p.close(), loop).result(5)
     loop.call_soon_threadsafe(loop.stop)
@@ -141,3 +142,68 @@ def test_expired_code_and_too_many_wrong_codes():
         assert ch.reply("evt_0002", "ALLOW", "x")[0] is False
     assert ch.reply("evt_0002", "ALLOW", good) == (False, "this question is void")
     assert ch.take_approval("evt_0002") is False
+
+
+def test_release_recheck_and_forward_hold_the_write_lock(station, gw, monkeypatch):
+    """While a release is between its safety re-check and its forward, a client write must
+    wait: it is not decided or forwarded until the release has landed (asserted on the station)."""
+    p, store, channel, tools = gw
+    eid = hold(p, store, 40)                                     # safe, held for approval
+    channel.send(eid, "Doser change held. Reply BLOCK or ALLOW")
+    assert channel.reply(eid, "ALLOW", code_for(channel, eid))[0]
+    release_tool = {t.__name__: t for t in tools}["release_held_command"]
+
+    in_forward, go = threading.Event(), threading.Event()
+    real_forward = StationWriter.forward
+
+    def slow_forward(self, raw):
+        in_forward.set()                                         # re-check is done, forward pending
+        assert go.wait(10)
+        return real_forward(self, raw)
+    monkeypatch.setattr(StationWriter, "forward", slow_forward)
+
+    out = {}
+    releaser = threading.Thread(target=lambda: out.update(release_tool(eid)))
+    releaser.start()
+    assert in_forward.wait(10)
+    racer = threading.Thread(target=lambda: poke.write("holding", 2, 410, HOST, p.port))
+    racer.start()                                                # a normal, allowed client write
+    time.sleep(0.7)
+    assert racer.is_alive()                                      # waiting for the lock
+    assert on_station(station, "holding_register", 2) == 400     # not decided, not forwarded
+    assert on_station(station, "holding_register", RATE) == 10   # release has not landed yet
+    go.set()
+    releaser.join(10)
+    racer.join(10)
+    assert out["released"] is True
+    assert on_station(station, "holding_register", RATE) == 40   # release landed first...
+    assert on_station(station, "holding_register", 2) == 410     # ...then the waiting write
+
+
+def test_operator_allow_expires_after_5_minutes_and_the_frame_stays_held(station, gw):
+    p, store, channel, tools = gw
+    now = [1000.0]
+    channel._clock = lambda: now[0]
+    release_tool = {t.__name__: t for t in tools}["release_held_command"]
+    eid = hold(p, store, 40)
+    channel.send(eid, "Doser change held. Reply BLOCK or ALLOW")
+    assert channel.reply(eid, "ALLOW", code_for(channel, eid))[0]    # valid code, given at t=1000
+    now[0] += 5 * 60 + 1                                             # not used for 5 minutes
+    out = release_tool(eid)
+    assert out["released"] is False and "older than 5 minutes" in out["error"]
+    assert on_station(station, "holding_register", RATE) == 10       # nothing was forwarded
+    assert p.held.by_event(eid) is not None                          # and it is still held
+    assert release_tool(eid)["released"] is False                    # the expired ALLOW is gone too
+    assert on_station(station, "holding_register", RATE) == 10
+
+
+def test_allow_inside_the_window_still_releases(station, gw):
+    p, store, channel, tools = gw
+    now = [1000.0]
+    channel._clock = lambda: now[0]
+    eid = hold(p, store, 40)
+    channel.send(eid, "Doser change held. Reply BLOCK or ALLOW")
+    assert channel.reply(eid, "ALLOW", code_for(channel, eid))[0]
+    now[0] += 5 * 60 - 1
+    assert {t.__name__: t for t in tools}["release_held_command"](eid)["released"] is True
+    assert on_station(station, "holding_register", RATE) == 40

@@ -38,10 +38,10 @@ class Gw:
         refresh = lambda: self.on(self.proxy.poller.refresh())  # noqa: E731
         writer = StationWriter(HOST, station.port)
         kit = dict(held=self.proxy.held, channel=self.channel, writer=writer, refresh=refresh,
-                   store=self.store, poller=self.proxy.poller)
+                   store=self.store, poller=self.proxy.poller, lock=self.proxy.run_locked)
         tools = make_read_tools(self.store, self.proxy.poller) + make_action_tools(
             self.store, self.proxy.poller, self.proxy.blocklist, self.channel, writer,
-            held=self.proxy.held, refresh=refresh)
+            held=self.proxy.held, refresh=refresh, lock=self.proxy.run_locked)
         self.tools = tools
         self.runner = Runner(
             self.store, self.channel, self.proxy.blocklist, budget=self.budget, held=self.proxy.held,

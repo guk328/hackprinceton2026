@@ -42,12 +42,12 @@ def build(cfg: dict, store, loop) -> dict:
         return asyncio.run_coroutine_threadsafe(poller.refresh(), loop).result(5)
 
     kit = dict(held=proxy.held, channel=channel, writer=writer, refresh=refresh,
-               store=store, poller=poller)
+               store=store, poller=poller, lock=proxy.run_locked)
 
     def make_agent():
         from gateway.agent.build import INTERRUPT_ON, build_agent
         tools = make_read_tools(store, poller) + make_action_tools(
-            store, poller, blocklist, channel, writer, held=proxy.held, refresh=refresh)
+            store, poller, blocklist, channel, writer, held=proxy.held, refresh=refresh, lock=proxy.run_locked)
         from gateway.agent.reports import make_save_report
         from gateway.agent.subagents import make_subagents
         subs = make_subagents(make_read_tools(store, poller), make_save_report(store, REPORTS_DIR))
