@@ -32,10 +32,11 @@ def build(cfg: dict, store, loop) -> dict:
     built) the runner still texts the operator with a templated message."""
     poller = StationPoller(cfg["station_host"], cfg["station_port"])
     blocklist = Blocklist()
-    proxy = Proxy(**cfg, poller=poller, store=store, blocklist=blocklist,
-                  held=HeldStore(store=store, regs=poller.regs))
-    channel = OperatorChannel(store)
     writer = StationWriter(cfg["station_host"], cfg["station_port"])
+    proxy = Proxy(**cfg, poller=poller, store=store, blocklist=blocklist,
+                  held=HeldStore(store=store, regs=poller.regs),
+                  alarm=writer.alarm if os.getenv("ALARM_ON_HOLD", "1") != "0" else None)
+    channel = OperatorChannel(store)
     budget = Budget(store)
 
     def refresh():   # called from agent worker threads

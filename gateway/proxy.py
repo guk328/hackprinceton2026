@@ -8,6 +8,10 @@ coil/register in the frame; otherwise nothing is sent to the station.
     HOLD    exception 0x06 to the client, frame kept in the HeldStore
     DENY    exception 0x01 (also any function code that is not 1-6, 15, 16)
 
+A HOLD backed by a predicted physics violation, and a LOGIC_TAMPER, also raise the
+station's ALARM coil (buzzer + red LED) when an `alarm` callable is given. Plain code,
+after the verdict and the client's reply; a failure is logged and changes nothing.
+
 One write is judged at a time, against station state read just before, and the
 next one waits for the station's answer to it. One upstream connection per
 client. Unparseable bytes close that client only; a write frame that does not
@@ -97,7 +101,8 @@ class Proxy:
     def __init__(self, station_host="127.0.0.1", station_port=5020,
                  host="0.0.0.0", port=1502, regs=None, connect_timeout=3.0,
                  poller: StationPoller | None = None, held: HeldStore | None = None,
-                 store: EventStore | None = None, blocklist: Blocklist | None = None):
+                 store: EventStore | None = None, blocklist: Blocklist | None = None,
+                 alarm=None):
         self.station = (station_host, station_port)
         self.host, self.port = host, port
         self.regs = regs or load_registers()
@@ -107,6 +112,7 @@ class Proxy:
         self.held = held if held is not None else HeldStore()
         self.store = store               # None: nothing is persisted (log lines only)
         self.blocklist = blocklist or Blocklist()
+        self.alarm = alarm               # callable() that sets ALARM = 1 on the station, or None
         self._write_lock = asyncio.Lock()   # one write decided and settled at a time
         self._loop: asyncio.AbstractEventLoop | None = None
         self._server: asyncio.Server | None = None
@@ -207,6 +213,24 @@ class Proxy:
             log.exception("could not store an event")
             return None
 
+    def raise_alarm(self, event_id, why: str):
+        """Make an incident visible on the station. Never raises, never blocks the caller."""
+        if self.alarm is None or self._loop is None:
+            return
+
+        async def run():
+            try:
+                await asyncio.to_thread(self.alarm)
+                log.warning("station ALARM raised for %s: %s", event_id, why)
+                if self.store is not None:
+                    self.store.save_agent_step(event_id, "action",
+                                               f"Station alarm raised (buzzer + red LED): {why}")
+            except Exception as e:
+                log.warning("could not raise the station ALARM for %s: %r", event_id, e)
+        task = self._loop.create_task(run())
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     def record_tamper(self, info: dict):
         """Settings changed behind the gateway (StationPoller found it). Stored as an event in
         the README 4.4 shape: decision DENY (the gateway does not accept the change), first
@@ -221,17 +245,21 @@ class Proxy:
             f"{c['name']} {c['last_known_good']} -> {c['current']}" for c in ch) or "hash differs")
             + " without a command through the gateway",
             f"station LOGIC_HASH {info['station_hash']}, last known good {info['expected_hash']}"]
-        return self.store.save_event({
+        event = self.store.save_event({
             "src_ip": TAMPER_SOURCE, "function": None, "kind": "register",
             "address": first["address"], "name": first["name"],
             "old_value": first["last_known_good"], "new_value": first["current"],
             "decision": DENY, "reasons": reasons, "prediction": None,
             "station": self._station_view(self.poller.snapshot)})
+        self.raise_alarm(event["id"], "settings changed behind the gateway")
+        return event
 
     async def _decide_frame(self, writes, src=None, frame_row=None):
         """Strictest verdict over every write in the frame. Anything that goes
         wrong while deciding is a HOLD. Returns (verdict, decisions, event ids)."""
         station = await self.poller.refresh()
+        if not station.connected:   # one lost packet on the hotspot must not hold a clean write;
+            station = await self.poller.refresh()   # still offline after this: held, as before
         verdict, decisions, befores = ALLOW, [], []
         for req in writes:
             befores.append(station)
@@ -257,6 +285,12 @@ class Proxy:
         log.warning("%s %s tid=%d fc=%d id=%s reasons=%s", src, verdict, frame.tid, frame.fc,
                     held.id if held else None, [r for d in decisions for r in d.reasons])
         self._reply_exception(src, c_writer, frame, EXC_HOLD if verdict == HOLD else EXC_DENY)
+        if verdict == HOLD:
+            codes = [v.code for d in decisions for v in getattr(d.prediction, "violations", None) or []
+                     if not v.pre_existing]
+            if codes:
+                self.raise_alarm(next((e for e in event_ids if e), None),
+                                 "held command would cause " + ", ".join(dict.fromkeys(codes)))
 
     async def _settled(self, pending, frame: Frame, relay):
         """Wait until the station has answered a forwarded write, so the next

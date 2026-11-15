@@ -3,6 +3,7 @@
     restore_logic(values)   holding 0-4 back to the last known good copy
     restore_defaults()      demo reset: coils and holding 0-4 to the register-map defaults
     safe_mode()             SAFE_MODE = 1 and ALARM = 1
+    alarm()                 ALARM = 1 only (buzzer + red LED; control is not touched)
     forward(raw)            one held frame, byte for byte, after the release checks
 
 None of these is an agent tool (restore_defaults is admin-only, behind POST /reset). The agent's tools (agent/tools_act.py) call them with
@@ -71,6 +72,15 @@ class StationWriter:
                 r = c.write_coil(self.regs.by_name(name).addr, True, device_id=self.regs.unit_id)
                 if r.isError():
                     raise RuntimeError(f"station refused {name}: {r}")
+        finally:
+            c.close()
+
+    def alarm(self) -> None:
+        c = self._client()
+        try:
+            r = c.write_coil(self.regs.by_name("ALARM").addr, True, device_id=self.regs.unit_id)
+            if r.isError():
+                raise RuntimeError(f"station refused ALARM: {r}")
         finally:
             c.close()
 

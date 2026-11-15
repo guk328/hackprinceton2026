@@ -197,17 +197,18 @@ def test_slow_walk_is_measured_from_where_it_started(monkeypatch):
 def test_walk_window_expires_after_30_minutes(monkeypatch):
     t = [1000.0]
     monkeypatch.setattr(policy, "monotonic", lambda: t[0])
-    assert decide(reg(0, 35), rate_snap(10)).decision == ALLOW
+    # Rates stay at or below 40 %: above that the physics inlet-dose check holds by itself.
+    assert decide(reg(0, 25), rate_snap(0)).decision == ALLOW
     t[0] += policy.STEP_WINDOW_S - 60
-    assert decide(reg(0, 36), rate_snap(35)).decision == HOLD       # 10 was seen 29 min ago
+    assert decide(reg(0, 26), rate_snap(25)).decision == HOLD       # 0 was seen 29 min ago
     t[0] += policy.STEP_WINDOW_S + 1
-    assert decide(reg(0, 60), rate_snap(35)).decision == ALLOW      # only 35 in the window now
+    assert decide(reg(0, 40), rate_snap(25)).decision == ALLOW      # only 25 in the window now
 
 
 def test_a_released_step_becomes_the_new_starting_point():
     assert decide(reg(0, 40), rate_snap(10)).decision == HOLD
     assert decide(reg(0, 40), rate_snap(10), release=True).decision == ALLOW   # operator said ALLOW
-    assert decide(reg(0, 45), rate_snap(40)).decision == ALLOW
+    assert decide(reg(0, 38), rate_snap(40)).decision == ALLOW      # from 10 it would be a step of 28
 
 
 # ---- OPERATOR_IPS: who, when and on-site can hold (review finding 2) -----------------------

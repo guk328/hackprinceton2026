@@ -43,7 +43,7 @@ class Gateway:
 
     def kill(self):
         if self.proc:
-            self.proc.send_signal(signal.SIGKILL)
+            self.proc.kill()                 # SIGKILL on POSIX, TerminateProcess on Windows
             self.proc.wait()
             self.proc = None
 
