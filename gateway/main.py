@@ -17,6 +17,7 @@ from gateway.agent.tools_read import make_read_tools
 from gateway.api import REPORTS_DIR, create_app
 from gateway.auth import Auth
 from gateway.blocklist import Blocklist
+from gateway.held import HeldStore
 from gateway.notify import OperatorChannel
 from gateway.proxy import Proxy, config
 from gateway.reset import reset
@@ -31,7 +32,8 @@ def build(cfg: dict, store, loop) -> dict:
     built) the runner still texts the operator with a templated message."""
     poller = StationPoller(cfg["station_host"], cfg["station_port"])
     blocklist = Blocklist()
-    proxy = Proxy(**cfg, poller=poller, store=store, blocklist=blocklist)
+    proxy = Proxy(**cfg, poller=poller, store=store, blocklist=blocklist,
+                  held=HeldStore(store=store, regs=poller.regs))
     channel = OperatorChannel(store)
     writer = StationWriter(cfg["station_host"], cfg["station_port"])
     budget = Budget(store)

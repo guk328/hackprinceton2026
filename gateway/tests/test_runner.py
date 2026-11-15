@@ -42,6 +42,7 @@ class Gw:
         tools = make_read_tools(self.store, self.proxy.poller) + make_action_tools(
             self.store, self.proxy.poller, self.proxy.blocklist, self.channel, writer,
             held=self.proxy.held, refresh=refresh)
+        self.tools = tools
         self.runner = Runner(
             self.store, self.channel, self.proxy.blocklist, budget=self.budget, held=self.proxy.held,
             make_agent=(lambda: build_agent(tools, self.model, budget=self.budget,

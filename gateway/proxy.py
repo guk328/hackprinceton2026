@@ -103,7 +103,7 @@ class Proxy:
         self.connect_timeout = connect_timeout
         self.poller = poller             # None: start() makes one, read on demand
         self._own_poller = poller is None
-        self.held = held or HeldStore()
+        self.held = held if held is not None else HeldStore()
         self.store = store               # None: nothing is persisted (log lines only)
         self.blocklist = blocklist or Blocklist()
         self._write_lock = asyncio.Lock()   # one write decided and settled at a time

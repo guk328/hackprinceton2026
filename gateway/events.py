@@ -76,6 +76,13 @@ CREATE TABLE IF NOT EXISTS agent_log (
     text     TEXT,
     data     TEXT
 );
+CREATE TABLE IF NOT EXISTS held (
+    id        TEXT PRIMARY KEY,
+    ts        REAL NOT NULL,
+    src_ip    TEXT,
+    raw       TEXT NOT NULL,
+    event_ids TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS spend (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     ts            TEXT NOT NULL,
@@ -143,7 +150,7 @@ class EventStore:
         """Demo reset: drop events, traffic and agent steps and restart their ids. The spend
         ledger is kept."""
         with self._lock:
-            for table in ("events", "traffic", "agent_log"):
+            for table in ("events", "traffic", "agent_log", "held"):
                 self._db.execute(f"DELETE FROM {table}")
             self._db.execute("DELETE FROM sqlite_sequence WHERE name IN ('events','traffic','agent_log')")
             self._db.commit()
@@ -253,6 +260,31 @@ class EventStore:
         return [{"id": r["id"], "ts": r["ts"], "event_id": r["event_id"], "kind": r["kind"],
                  "text": r["text"], "data": None if r["data"] is None else json.loads(r["data"])}
                 for r in reversed(rows)]
+
+    # ------------------------------------------------------------------- held
+
+    def held_save(self, held_id: str, ts: float, src_ip: str, raw: bytes, event_ids) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO held (id, ts, src_ip, raw, event_ids)"
+                             " VALUES (?,?,?,?,?)",
+                             (held_id, ts, src_ip, raw.hex(), json.dumps(list(event_ids))))
+            self._db.commit()
+
+    def held_delete(self, held_id: str | None = None) -> None:
+        """One held frame, or all of them when no id is given."""
+        with self._lock:
+            if held_id is None:
+                self._db.execute("DELETE FROM held")
+            else:
+                self._db.execute("DELETE FROM held WHERE id = ?", (held_id,))
+            self._db.commit()
+
+    def held_rows(self) -> list[dict]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM held ORDER BY id").fetchall()
+        return [{"id": r["id"], "ts": r["ts"], "src_ip": r["src_ip"],
+                 "raw": bytes.fromhex(r["raw"]), "event_ids": json.loads(r["event_ids"])}
+                for r in rows]
 
     # ------------------------------------------------------------------ spend
 

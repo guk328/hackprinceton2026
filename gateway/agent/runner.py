@@ -77,6 +77,18 @@ class Runner:
         self.channel.on_reply = self._reply_from_any_thread
         q = self.store.subscribe()
         self._main = asyncio.create_task(self._consume(q))
+        self._reopen_held()
+
+    def _reopen_held(self):
+        """After a restart the held frames are back but the questions (in memory) are not.
+        Ask again, with fresh codes; replies are then handled by plain code."""
+        for cmd in (self.held.all() if self.held is not None else []):
+            for eid in cmd.event_ids[:1]:
+                event = self.store.get_event(eid)
+                if event and self.channel.decision(eid) is None \
+                        and not any(m["event_id"] == eid for m in self.channel.inbox()):
+                    self._step(eid, "status", "Gateway restarted: command still held, asking the operator again")
+                    self.channel.send(eid, template_text(event))
 
     async def close(self):
         for t in [self._main, *self._tasks]:
