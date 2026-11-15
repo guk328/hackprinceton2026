@@ -109,3 +109,122 @@ To repeat the fake-helper tests using an interpreter with pytest available:
 ```sh
 python -m pytest -x -q twin/tests
 ```
+
+# Scenarios 0 and 1 (ME step 9)
+
+These scripts target only our gateway (default 127.0.0.1:1502, unit 1). They
+never initialize the station or bypass the gateway to send attack writes.
+`--host` and `--port` select our own gateway; known station ports 502/5020 are
+rejected. Run with `python -m attacks.normal_day` / `python -m
+attacks.chlorine_overdose` from the repo root. Every read/write request and its
+response is printed as one JSON line, followed by a scenario result. A nonzero
+exit means the expected behavior was not demonstrated.
+
+## Reproduce and record automatically
+
+With ports 5020/1502 free (stop existing local station/gateway/twin first):
+
+```sh
+python -m attacks.verify_demo --output docs/evidence/scenario_0_1-repeat.json
+```
+
+Use an environment with the existing Modbus, YAML and gateway dotenv dependencies
+from requirements.txt. The Step 7 minimal environment may not include
+`python-dotenv==1.2.4`, which the gateway imports; use CompE's configured
+environment or install that already-pinned requirement before starting the gateway.
+No additional dependency was introduced for these scripts. For this session's
+live check, existing system dotenv was made available to the virtual environment
+through a temporary import path; no package was installed or repository config changed.
+
+The verifier starts a fresh software station and real gateway on localhost,
+sets water telemetry to 40% / 1 mg/L, runs both CLI scripts, checks actual relay
+readbacks, reads the final rate directly from the station and exports the
+held command's real prediction plus gateway trace. It uses a temporary sensor
+file and shuts down its own processes. It refuses to reuse occupied ports or
+overwrite an evidence file. Optional `--station-port` / `--gateway-port` allow
+another pair of free local ports.
+
+This fixture keeps water telemetry fixed; no twin runs concurrently. That makes
+the two scenarios and their forecast reproducible. It verifies gateway enforcement,
+not a continuously running water simulation. The stored candidate curve is a
+counterfactual forecast of an unforwarded command; it is not actual contaminated
+water in the twin. The baseline curve is the no-command forecast.
+
+## Run manually through an existing owned gateway
+
+For the exact replay, stop the twin and use a fresh software station at default
+settings: demand 40%, rate 10%, doser command on, SAFE_MODE off, AUTO_MODE on.
+In a separate terminal, initialize only the owned software fixture's telemetry:
+
+```sh
+python -m sim.poke write holding 100 400
+python -m sim.poke write holding 101 100
+```
+
+These are fixture setup writes to twin-owned telemetry, not attack commands.
+Start the gateway with STATION_HOST=127.0.0.1, STATION_PORT=5020 and
+GATEWAY_PORT=1502 (configured by CompE), then run:
+
+```sh
+python -m attacks.normal_day
+python -m sim.poke read all
+python -m attacks.chlorine_overdose
+```
+
+Before scenario 1, ensure discrete inputs PUMP_RUNNING and DOSER_RUNNING are 1.
+The software station publishes those on its next control tick; do not race the
+second script immediately against the pump write. The first script checks
+command/register readback; physical relay/fan observation requires Step 8.
+After the replay, restart station/twin to restore the normal water simulation.
+For a live twin run, record the actual starting state: crossing times will differ
+as water changes, and the twin's `--reset` initializes 60%, not this 40% fixture.
+
+## Scenario 0 — normal day
+
+Operator intent: turn the pump on and make a small valid level-setting change.
+The script writes pump coil 0 to 1, then changes high setpoint by one percentage
+point within bounds (default raw 850 -> 840, or 85% -> 84%). Both replies must
+succeed and readbacks must match. Repeating it changes the setpoint again;
+reset the fixture before repeating an exact judge replay.
+
+Expected physical outcome: the pump adds water while the town draws water;
+at 40% demand, a running pump adds net 42 m³/h. A real relay click/fan response
+is a hardware observation, not something the software test can prove.
+
+## Scenario 1 — chlorine overdose
+
+Attacker intent: increase dosing enough to make stored water exceed the demo's
+4 mg/L chlorine guard. Script sends holding 0 -> 100, expects Modbus exception
+0x06 (this gateway's HOLD), verifies the rate is unchanged, then sends doser
+coil 1 -> 1, which is harmless at the retained 10% rate and should be allowed.
+The script requires pump/doser already running, rate 10% and safe mode off.
+It stops on missing prerequisites, unexpected ALLOW, other exceptions, or a
+changed rate. No alarm or relay-off claim is inferred: a held dose increase
+leaves previously operating equipment at its preceding safe setting.
+
+Without the hold: from this fixture, the candidate crosses 4 mg/L at 80.667
+plant-min with sampled chlorine 4.001457 mg/L. With the hold: rate remains 10%.
+An exception alone does not establish the reason; the verifier requires a real
+new CHLORINE_HIGH prediction and exports its crossing time and trajectory.
+No verified analogous incident is claimed here; primary-source incident context
+remains research step 11.
+
+## Saved proof (2026-11-14)
+
+`docs/evidence/scenario_0_1.json` contains actual local software-rig output:
+
+- Scenario 0: pump command ALLOW; high setpoint 850 -> 840 ALLOW.
+- Scenario 1: rate 100 HOLD (0x06), CHLORINE_HIGH at 80.667 plant-min;
+  subsequent doser-on command ALLOW at unchanged rate 10.
+- Direct station readback: rate 10, high SP 840, actual pump/doser both 1,
+  water telemetry unchanged at raw 400/100.
+- Real physics, 270-min gateway horizon, 1,621 candidate and baseline points
+  each, gateway hold reasons and frame trace.
+- Eight focused script tests passed: command order/unit, valid setpoint boundary,
+  expected hold, denial/transport errors, unexpected allow, changed readback and
+  missing prerequisites. ESP32/physical relay proof remains Step 8.
+
+For a future website, the evidence JSON provides a recorded demonstration source.
+Clearly label it recorded software-rig evidence, not live hardware telemetry.
+Candidate prediction and baseline points are `(plant_minutes, level_pct,
+chlorine_mgl)`; plot them separately from any current twin readings.
