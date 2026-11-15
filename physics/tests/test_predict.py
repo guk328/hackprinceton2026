@@ -118,9 +118,9 @@ class ForecastTests(unittest.TestCase):
         self.assertTrue(existing.violations[0].pre_existing)
         state = PlantState(level_pct=40, auto_mode=False)
         caused = predict(state, Command("register", 0, 100))
-        self.assertEqual(len(caused.violations), 1)
-        self.assertGreater(caused.violations[0].minutes_until, 0)
-        self.assertFalse(caused.violations[0].pre_existing)
+        own = [v for v in caused.violations if not v.pre_existing]   # manual pump-on overflow is pre-existing
+        self.assertEqual(len(own), 1)
+        self.assertGreater(own[0].minutes_until, 0)
 
 
 class FullContractTests(unittest.TestCase):
@@ -214,7 +214,8 @@ class FullContractTests(unittest.TestCase):
     def test_missing_cycle_history_preserves_old_constructor(self):
         state = PlantState(pump_on=False, auto_mode=False)
         result = predict(state, Command("coil", 0, 1), horizon_min=1)
-        self.assertTrue(result.safe)
+        self.assertTrue(result.assessment_complete)   # (manual pump on overflows later: open-loop check)
+        self.assertNotIn("PUMP_SHORT_CYCLE", [v.code for v in result.violations])
         self.assertEqual(state.pump_start_times_s, ())
         self.assertEqual(state.elapsed_s, 0)
 
@@ -272,3 +273,72 @@ class FullContractTests(unittest.TestCase):
                 else:
                     self.fail("Fine-step reference did not cross " + code)
                 self.assertLessEqual(abs(coarse.minutes_until - elapsed_s / 60), 1)
+
+
+class InletDoseTests(unittest.TestCase):
+    """A dose whose feed water is above 4.0 mg/L is unsafe even when the window misses it."""
+
+    def low_demand(self, **kw):
+        return PlantState(level_pct=60, chlorine_mgl=1.0, demand_pct=2, pump_on=True,
+                          doser_on=True, **kw)
+
+    def test_overdose_at_low_demand_is_caught_beyond_the_window(self):
+        p = predict(self.low_demand(), Command("register", 0, 100), horizon_min=270)
+        self.assertFalse(p.safe)
+        (v,) = [v for v in p.violations if v.code == "CHLORINE_HIGH"]
+        self.assertFalse(v.pre_existing)
+        self.assertEqual((v.minutes_until, v.value, v.limit), (270.0, 10.0, 4.0))
+        self.assertLess(max(row[2] for row in p.trajectory), 4.0)   # the window alone misses it
+
+    def test_line_is_forty_percent(self):
+        self.assertTrue(predict(self.low_demand(), Command("register", 0, 40), horizon_min=270).safe)
+        self.assertFalse(predict(self.low_demand(), Command("register", 0, 41), horizon_min=270).safe)
+
+    def test_in_window_crossing_keeps_its_own_time(self):
+        state = PlantState(level_pct=60, chlorine_mgl=1.0, demand_pct=100, pump_on=True, doser_on=True)
+        (v,) = [v for v in predict(state, Command("register", 0, 100), horizon_min=270).violations
+                if v.code == "CHLORINE_HIGH"]
+        self.assertLess(v.minutes_until, 270)
+
+    def test_doser_off_or_safe_mode_is_not_flagged_and_existing_high_rate_is_pre_existing(self):
+        for state in (self.low_demand(doser_rate_pct=100, safe_mode=True),):
+            self.assertTrue(predict(state, None, horizon_min=60).safe)
+        armed = PlantState(level_pct=60, chlorine_mgl=1.0, demand_pct=2, pump_on=True,
+                           doser_on=False, doser_rate_pct=100)
+        p = predict(armed, Command("coil", 1, 1), horizon_min=270)          # arming the doser
+        self.assertIn("CHLORINE_HIGH", [v.code for v in p.violations if not v.pre_existing])
+        already = self.low_demand(doser_rate_pct=100)
+        p = predict(already, Command("coil", 0, 1), horizon_min=270)
+        self.assertTrue(all(v.pre_existing for v in p.violations if v.code == "CHLORINE_HIGH"))
+
+
+class OpenLoopTests(unittest.TestCase):
+    """Manual mode: the level is a straight line, so a crossing after the window is still found."""
+
+    def test_drain_beyond_the_window_has_its_exact_time(self):
+        state = PlantState(level_pct=60, chlorine_mgl=1.0, demand_pct=71, pump_on=False, doser_on=True)
+        p = predict(state, Command("coil", 2, 0), horizon_min=270)
+        (v,) = [v for v in p.violations if v.code == "PRESSURE_LOSS"]
+        self.assertFalse(v.pre_existing)
+        self.assertAlmostEqual(v.minutes_until, 45 / 100 * 400 / (0.71 * 45) * 60, places=3)
+        self.assertGreater(v.minutes_until, 270)
+
+    def test_overflow_beyond_the_window_has_its_exact_time(self):
+        state = PlantState(level_pct=60, chlorine_mgl=1.0, demand_pct=100, pump_on=False, doser_on=False,
+                           auto_mode=False)
+        p = predict(state, Command("coil", 0, 1), horizon_min=270)
+        (v,) = [v for v in p.violations if v.code == "TANK_OVERFLOW"]
+        self.assertAlmostEqual(v.minutes_until, 35 / 100 * 400 / 15 * 60, places=3)
+
+    def test_in_window_time_is_kept_and_auto_or_safe_mode_is_not_extrapolated(self):
+        fast = PlantState(level_pct=45, chlorine_mgl=1.0, demand_pct=100, pump_on=False, doser_on=True)
+        (v,) = [v for v in predict(fast, Command("coil", 2, 0), horizon_min=270).violations
+                if v.code == "PRESSURE_LOSS"]
+        self.assertAlmostEqual(v.minutes_until, 160, delta=1)
+        for state in (PlantState(level_pct=60, demand_pct=71, pump_on=False),
+                      PlantState(level_pct=60, demand_pct=71, pump_on=False, auto_mode=False, safe_mode=True)):
+            self.assertTrue(predict(state, None, horizon_min=270).safe)
+
+    def test_balanced_or_already_past_is_not_extrapolated(self):
+        state = PlantState(level_pct=60, demand_pct=0, pump_on=False, auto_mode=False)
+        self.assertTrue(predict(state, None, horizon_min=60).safe)

@@ -14,7 +14,8 @@ from .limits import (
     SETPOINT_BOUNDS, TANK_OVERFLOW_PCT, PRESSURE_LOSS_PCT,
     MAX_PUMP_STARTS_PER_HOUR, PUMP_START_WINDOW_S,
 )
-from .model import TANK_CAPACITY_M3, Command, PlantState, step
+from .model import (MAX_DEMAND_M3_H, MAX_DOSE_G_H, PUMP_FLOW_M3_H, TANK_CAPACITY_M3,
+                    Command, PlantState, step)
 
 
 # Wire addresses/scales mirror shared/registers.yaml; tests check that contract.
@@ -181,6 +182,64 @@ def _rollout(state, horizon_min):
     return trajectory, list(first_crossings.values())
 
 
+def inlet_dose_mgl(state):
+    """Chlorine in the water the pump delivers while the doser runs [mg/L] (g/h over m³/h)."""
+    if state.safe_mode or not state.doser_on:
+        return 0.0
+    return MAX_DOSE_G_H * state.doser_rate_pct / 100.0 / PUMP_FLOW_M3_H
+
+
+def _inlet_dose_violation(state, horizon_min):
+    """Window-independent CHLORINE_HIGH. A well-mixed tank tends toward the concentration of
+    the water fed into it, so a dose that makes the inlet water exceed the limit crosses it
+    on some later pump cycle even when the forecast window ends first (low demand: the pump
+    reaches its high setpoint and stops before the crossing). minutes_until is the window
+    length: the crossing is no sooner than the rollout shows, and not ruled out after it.
+    Conservative by the decay term (a feed just above 4.0 may settle just below it)."""
+    inlet = inlet_dose_mgl(state)
+    if inlet <= CHLORINE_HIGH_MGL:
+        return None
+    return Violation(
+        "CHLORINE_HIGH", float(horizon_min), inlet, CHLORINE_HIGH_MGL,
+        f"Dosed water entering the tank is {inlet:.1f} mg/L while the pump runs, above "
+        f"4.0 mg/L: the tank passes 4.0 mg/L on a later pump cycle, beyond this "
+        f"{float(horizon_min):g}-minute forecast",
+    )
+
+
+def _open_loop_violations(state):
+    """Window-independent TANK_OVERFLOW / PRESSURE_LOSS. In manual (no AUTO_MODE, no
+    SAFE_MODE) nothing will change the pump, so the level moves in a straight line at
+    pump flow minus demand until it hits a limit: the crossing time is exact, even when
+    it falls after the forecast window (a drain at 70 % demand from 60 % takes ~340 min).
+    Looks at most one plant-day (MAX_HORIZON_MIN) ahead, the model's own limit."""
+    if state.auto_mode or state.safe_mode:
+        return []
+    net_m3_h = (PUMP_FLOW_M3_H if state.pump_on else 0.0) - state.demand_pct / 100.0 * MAX_DEMAND_M3_H
+    if net_m3_h < 0 and state.level_pct > PRESSURE_LOSS_PCT:
+        minutes = (state.level_pct - PRESSURE_LOSS_PCT) / 100.0 * TANK_CAPACITY_M3 / -net_m3_h * 60.0
+        return [] if minutes > MAX_HORIZON_MIN else [Violation("PRESSURE_LOSS", minutes, PRESSURE_LOSS_PCT, PRESSURE_LOSS_PCT,
+                          f"Tank below 15% pressure proxy in about {minutes:.1f} plant-minutes: "
+                          "manual mode with the pump off, nothing restarts it")]
+    if net_m3_h > 0 and state.level_pct < TANK_OVERFLOW_PCT:
+        minutes = (TANK_OVERFLOW_PCT - state.level_pct) / 100.0 * TANK_CAPACITY_M3 / net_m3_h * 60.0
+        return [] if minutes > MAX_HORIZON_MIN else [Violation("TANK_OVERFLOW", minutes, TANK_OVERFLOW_PCT, TANK_OVERFLOW_PCT,
+                          f"Tank exceeds the 95% overflow guard in about {minutes:.1f} plant-minutes: "
+                          "manual mode with the pump on, nothing stops it")]
+    return []
+
+
+def _with_inlet_check(state, violations, horizon_min):
+    """Add the window-independent checks for any code the rollout did not already find.
+    A zero-length forecast is an instant check: no look-ahead of any kind."""
+    if not horizon_min:
+        return violations
+    found = {v.code for v in violations}
+    extra = [v for v in [_inlet_dose_violation(state, horizon_min), *_open_loop_violations(state)]
+             if v is not None and v.code not in found]
+    return violations + extra
+
+
 def _attribute_violations(candidate, baseline):
     by_code = {violation.code: violation for violation in baseline}
     return [replace(
@@ -209,6 +268,8 @@ def predict(state, cmd, horizon_min=120):
         _validate_state(candidate)
         baseline_trajectory, baseline_violations = _rollout(replace(state), horizon_min)
         trajectory, violations = _rollout(candidate, horizon_min)
+        baseline_violations = _with_inlet_check(state, baseline_violations, horizon_min)
+        violations = _with_inlet_check(candidate, violations, horizon_min)
         return Prediction(
             safe=not violations,
             violations=_attribute_violations(violations, baseline_violations),

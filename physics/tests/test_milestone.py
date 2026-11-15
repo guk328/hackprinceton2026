@@ -18,8 +18,12 @@ class MilestoneTests(unittest.TestCase):
         self.assertFalse(result.safe)
         self.assertTrue(result.assessment_complete)
         self.assertEqual(len(result.trajectory), 721)
-        self.assertEqual(len(result.violations), 1)
-        violation = result.violations[0]
+        # Manual with the pump on also overflows later whatever the command (open-loop check):
+        # that one is pre-existing. The command's own violation is the overdose.
+        own = [v for v in result.violations if not v.pre_existing]
+        self.assertEqual([v.code for v in result.violations if v.pre_existing], ["TANK_OVERFLOW"])
+        self.assertEqual(len(own), 1)
+        violation = own[0]
         self.assertEqual(violation.code, "CHLORINE_HIGH")
         self.assertFalse(violation.pre_existing)
         self.assertIsNone(violation.baseline_minutes_until)
@@ -110,8 +114,9 @@ class MilestoneTests(unittest.TestCase):
             self.assertIsNotNone(match)
             scale, low, high = map(int, match.groups())
             self.assertEqual(SETPOINT_BOUNDS[field][:2], (low / scale, high / scale))
-            for value in (low, high):
-                self.assertTrue(predict(PlantState(), Command("register", address, value), horizon_min=0).safe)
+            for value in (low, high):   # envelope edges are in range (a 100 % dose is still unsafe: inlet check)
+                codes = [v.code for v in predict(PlantState(), Command("register", address, value), horizon_min=0).violations]
+                self.assertNotIn("SETPOINT_OUT_OF_RANGE", codes)
         for command in (Command("register", 1, 499), Command("register", 2, 701), Command("register", 3, 401)):
             result = predict(PlantState(), command, horizon_min=0)
             self.assertFalse(result.safe)
