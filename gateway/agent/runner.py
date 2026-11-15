@@ -32,6 +32,10 @@ def template_text(event: dict) -> str:
         f" {event['old_value']} -> {event['new_value']}" if event.get("old_value") is not None
         else f" = {event['new_value']}")
     why = (event.get("reasons") or ["no reason recorded"])[0]
+    for v in (event.get("prediction") or {}).get("violations") or []:
+        if not v.get("pre_existing") and v.get("message"):   # the model's plain-English line
+            why = v["message"]
+            break
     verb = "held" if event.get("decision") == "HOLD" else "refused"
     text = (f"Backflow {verb} a command from {event.get('src_ip')}: {what}{change}. "
             f"Why: {why}. It did not reach the station. Reply BLOCK or ALLOW")
