@@ -14,11 +14,12 @@ from gateway.agent.budget import Budget
 from gateway.agent.runner import Runner
 from gateway.agent.tools_act import make_action_tools, release
 from gateway.agent.tools_read import make_read_tools
-from gateway.api import create_app
+from gateway.api import REPORTS_DIR, create_app
 from gateway.auth import Auth
 from gateway.blocklist import Blocklist
 from gateway.notify import OperatorChannel
 from gateway.proxy import Proxy, config
+from gateway.reset import reset
 from gateway.station import StationPoller
 from gateway.station_write import StationWriter
 
@@ -50,8 +51,12 @@ def build(cfg: dict, store, loop) -> dict:
     runner = Runner(store, channel, blocklist, budget=budget, held=proxy.held,
                     make_agent=make_agent if os.getenv("AGENT_MODEL") else None,
                     release=lambda event_id: release(event_id, **kit))
+    def do_reset():
+        return reset(store, blocklist=blocklist, held=proxy.held, channel=channel, runner=runner,
+                     poller=poller, writer=writer, reports_dir=REPORTS_DIR)
+
     return dict(poller=poller, proxy=proxy, channel=channel, runner=runner, budget=budget,
-                blocklist=blocklist)
+                blocklist=blocklist, reset=do_reset)
 
 
 async def run(cfg: dict, api_host: str, api_port: int):
@@ -60,9 +65,12 @@ async def run(cfg: dict, api_host: str, api_port: int):
     await g["poller"].start()
     await g["proxy"].start()
     await g["runner"].start()
+    if os.getenv("BACKFLOW_RESET_ON_START") == "1":
+        await asyncio.to_thread(g["reset"])
     log.info("agent model: %s, spend so far $%.4f of $%.2f", os.getenv("AGENT_MODEL") or "none",
              g["budget"].spent(), g["budget"].ceiling)
-    app = create_app(store, g["poller"], g["proxy"]._station_view, channel=g["channel"], auth=Auth())
+    app = create_app(store, g["poller"], g["proxy"]._station_view, channel=g["channel"], auth=Auth(),
+                     reset=g["reset"])
     server = uvicorn.Server(uvicorn.Config(app, host=api_host, port=api_port, log_level="info"))
     try:
         await server.serve()

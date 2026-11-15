@@ -139,6 +139,15 @@ class EventStore:
         with self._lock:
             self._db.close()
 
+    def clear(self):
+        """Demo reset: drop events, traffic and agent steps and restart their ids. The spend
+        ledger is kept."""
+        with self._lock:
+            for table in ("events", "traffic", "agent_log"):
+                self._db.execute(f"DELETE FROM {table}")
+            self._db.execute("DELETE FROM sqlite_sequence WHERE name IN ('events','traffic','agent_log')")
+            self._db.commit()
+
     # ---------------------------------------------------------------- traffic
 
     def save_traffic(self, src_ip, direction, tid, fc, address=None, count=None,

@@ -13,6 +13,7 @@
 
 Every request body is a strict pydantic model (unknown fields, wrong types and odd ids are
 refused with 422 before any code runs); ids in paths are pattern-checked.
+    POST /reset             admin: demo reset (gateway/reset.py)
     GET  /reports/{id}      gateway/reports/<id>.md as text
     GET  /                  dashboard/ (static, mounted last so the routes above win)
 
@@ -62,7 +63,7 @@ def slim(event: dict) -> dict:
 
 
 def create_app(store: EventStore, poller=None, station_view=None, channel=None,
-               auth: Auth | None = None, reports_dir: Path = REPORTS_DIR, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
+               auth: Auth | None = None, reset=None, reports_dir: Path = REPORTS_DIR, dashboard_dir: Path = DASHBOARD_DIR) -> FastAPI:
     """`poller` is a StationPoller (or None: /state reports not connected);
     `station_view` turns its snapshot into the README 4.4 station object."""
     app = FastAPI(title="Backflow gateway")
@@ -134,6 +135,12 @@ def create_app(store: EventStore, poller=None, station_view=None, channel=None,
     @app.get("/operator/inbox", dependencies=admin)
     def operator_inbox():
         return channel.inbox() if channel is not None else []
+
+    @app.post("/reset", dependencies=admin)
+    def reset_demo():
+        if reset is None:
+            raise HTTPException(503, "reset is not available")
+        return reset()
 
     @app.get("/reports/{event_id}", response_class=PlainTextResponse)
     def report(event_id: str):

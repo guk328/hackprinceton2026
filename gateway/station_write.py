@@ -1,10 +1,11 @@
 """The gateway's own writes to the station. Three fixed-purpose calls, nothing general:
 
     restore_logic(values)   holding 0-4 back to the last known good copy
+    restore_defaults()      demo reset: coils and holding 0-4 to the register-map defaults
     safe_mode()             SAFE_MODE = 1 and ALARM = 1
     forward(raw)            one held frame, byte for byte, after the release checks
 
-None of these is an agent tool. The agent's tools (agent/tools_act.py) call them with
+None of these is an agent tool (restore_defaults is admin-only, behind POST /reset). The agent's tools (agent/tools_act.py) call them with
 values the gateway already holds; the agent never supplies an address or a value.
 Synchronous (called from the agent's worker thread), one short connection per call.
 """
@@ -41,6 +42,27 @@ class StationWriter:
         finally:
             c.close()
         return data
+
+    def restore_defaults(self) -> dict[int, int]:
+        """Coils and holding 0-4 to their defaults. SAFE_MODE goes first: while it is on the
+        station ignores the rest. Returns the holding 0-4 values written."""
+        by_key = self.regs._by_key
+        coils = sorted((r.addr, r) for (k, _), r in by_key.items() if k == "coil" and r.default is not None)
+        logic = {a: self.regs.lookup("holding_register", a).default for a in LOGIC_ADDRS}
+        c = self._client()
+        try:
+            safe = self.regs.by_name("SAFE_MODE")
+            ops = [lambda: c.write_coil(safe.addr, bool(safe.default), device_id=self.regs.unit_id),
+                   lambda: c.write_registers(LOGIC_ADDRS[0], [int(logic[a]) for a in LOGIC_ADDRS],
+                                             device_id=self.regs.unit_id)]
+            ops += [lambda r=r: c.write_coil(r.addr, bool(r.default), device_id=self.regs.unit_id)
+                    for _, r in coils]
+            for op in ops:
+                if op().isError():
+                    raise RuntimeError("station refused a default")
+        finally:
+            c.close()
+        return logic
 
     def safe_mode(self) -> None:
         c = self._client()

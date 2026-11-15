@@ -57,3 +57,4 @@ class HeldStore:
 
     def clear(self) -> None:
         self._items.clear()
+        self._n = 0

@@ -71,6 +71,16 @@ class Runner:
                 t.cancel()
         await asyncio.gather(*[t for t in [self._main, *self._tasks] if t], return_exceptions=True)
 
+    def reset(self):
+        """Demo reset: forget every incident. The agent is rebuilt on next use, because its
+        checkpointed threads are keyed by event id and the ids start again."""
+        for t in list(self._tasks):
+            t.cancel()
+        self.sessions.clear()
+        self._recent.clear()
+        self._agent = None
+        self._agent_failed = self.make_agent is None
+
     def _spawn(self, coro):
         t = asyncio.create_task(coro)
         self._tasks.add(t)

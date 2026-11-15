@@ -175,6 +175,18 @@ $("login").addEventListener("submit", async (ev) => {
   } catch (e) { $("login-err").textContent = "Gateway not reachable"; }
 });
 
+const resetBtn = el("button", "ghost", "Reset demo");
+$("admin-tools").append(resetBtn);
+resetBtn.addEventListener("click", async () => {
+  if (!confirm("Clear all events, texts and blocks, and put the station back to defaults?")) return;
+  resetBtn.disabled = true;
+  try {
+    const r = await fetch("/reset", { method: "POST", credentials: "same-origin" });
+    if (r.ok) location.reload(); else alert(`Reset failed (${r.status})`);
+  } catch (e) { alert("Gateway not reachable"); }
+  resetBtn.disabled = false;
+});
+
 $("logout").addEventListener("click", async () => {
   try { await fetch("/logout", { method: "POST", credentials: "same-origin" }); } catch (e) { /* ignore */ }
   showAdmin(false);
