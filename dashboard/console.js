@@ -303,7 +303,7 @@
         const reject = el("button", "reject", "Reject and block source"), approve = el("button", "approve", "Approve release");
         reject.addEventListener("click", () => answer(inc.q, "BLOCK"));
         approve.addEventListener("click", () => answer(inc.q, "ALLOW"));
-        const note = el("span", "note", `An approval is re-checked against physics before release.${inc.q.code ? ` Code ${inc.q.code}.` : ""}`);
+        const note = el("span", "note", `Approval is re-checked against physics.${inc.q.code ? ` Code ${inc.q.code}.` : ""}`);
         if (err) note.replaceChildren(el("span", "err", err));
         actions.append(reject, approve, note);
       } else if (inc.phase !== "investigating") {

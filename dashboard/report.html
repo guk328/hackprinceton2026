@@ -4,27 +4,43 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Incident report · Backflow</title>
-<link rel="stylesheet" href="site.css?v=4">
+<link rel="stylesheet" href="app.css?v=8">
 <link rel="icon" href="data:,">
 </head>
-<body>
-<header class="bar">
-  <a class="name" href="index.html">Backflow</a>
-  <span class="where" id="where">Incident report</span>
-</header>
-<div class="report-tools">
+<body class="reportpage">
+<div class="rtools">
   <a class="btn quiet" id="back" href="console.html">Back to the console</a>
-  <button class="quiet" onclick="print()">Print</button>
-  <span class="muted" id="note">Drafted by the agent from the gateway's stored events. Check it before filing.</span>
+  <button onclick="print()">Print or save as PDF</button>
+  <span class="note" id="note"></span>
 </div>
-<article class="report" id="report"><p class="muted">Loading…</p></article>
+<article class="paper">
+  <header class="lh">
+    <span class="brand"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.2C12 2.2 4.8 10 4.8 14.8a7.2 7.2 0 0 0 14.4 0C19.2 10 12 2.2 12 2.2z" fill="currentColor"/><path d="M8.6 14.6l2.4 2.4 4.4-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>Backflow</span>
+    <div class="doc"><b>Incident report</b><span id="doc-id"></span><br>Pump station 1</div>
+  </header>
+  <dl class="meta" id="meta" hidden>
+    <div><dt>Detected</dt><dd id="m-when">–</dd></div>
+    <div><dt>Command</dt><dd id="m-cmd">–</dd></div>
+    <div><dt>Source</dt><dd id="m-src">–</dd></div>
+    <div><dt>Gateway decision</dt><dd id="m-dec">–</dd></div>
+  </dl>
+  <figure class="fig" id="fig" hidden>
+    <div class="chart" id="chart"></div>
+    <figcaption id="cap"></figcaption>
+  </figure>
+  <div class="content" id="report"><p>Loading…</p></div>
+  <footer class="sign">
+    <span>Prepared by the Backflow incident agent from the gateway's stored events and traffic records. Identifiers such as evt_0003 and traffic #23 refer to those records.</span>
+    <span id="printed"></span>
+  </footer>
+</article>
 <script>
-// Renders the agent's markdown report. A small renderer of our own: every piece of text goes
-// in with textContent, so nothing in a report can run as HTML.
+// The agent's incident report as a document. The markdown is rendered by a small renderer of our own:
+// every piece of text goes in with textContent, so nothing in a report can run as HTML.
 "use strict";
 (async () => {
   const q = new URLSearchParams(location.search), id = q.get("id") || "", replay = q.get("mode") === "replay" || location.protocol === "file:";
-  const box = document.getElementById("report");
+  const $ = (i) => document.getElementById(i), box = $("report");
   const el = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) inline(n, text); return n; };
   function inline(node, text) {               // **bold** and `code`
     for (const part of String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
@@ -36,11 +52,10 @@
   }
   function render(md) {
     box.replaceChildren();
-    const lines = md.replace(/\r/g, "").split("\n");
     let list = null, table = null, pre = null, para = [];
     const flush = () => { if (para.length) { box.append(el("p", para.join(" "))); para = []; } list = table = null; };
-    for (const line of lines) {
-      if (pre) { if (line.startsWith("```")) { pre = null; } else pre.textContent += line + "\n"; continue; }
+    for (const line of md.replace(/\r/g, "").split("\n")) {
+      if (pre) { if (line.startsWith("```")) pre = null; else pre.textContent += line + "\n"; continue; }
       if (line.startsWith("```")) { flush(); pre = document.createElement("pre"); box.append(pre); continue; }
       const h = /^(#{1,4})\s+(.*)$/.exec(line), li = /^\s*(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
       if (h) { flush(); box.append(el(`h${Math.min(3, h[1].length)}`, h[2])); }
@@ -56,25 +71,57 @@
         const tr = document.createElement("tr");
         for (const cell of line.trim().slice(1, -1).split("|")) tr.append(el(first ? "th" : "td", cell.trim()));
         table.append(tr);
-      } else if (!line.trim()) flush();
-      else if (/^\s*(---|\*\*\*)\s*$/.test(line)) flush();
+      } else if (!line.trim() || /^\s*(---|\*\*\*)\s*$/.test(line)) flush();
       else { list = table = null; para.push(line.trim()); }
     }
     flush();
   }
   const fail = (text) => { box.replaceChildren(el("p", text)); };
+
+  // The event's own record: header fields and the forecast figure.
+  function header(e) {
+    if (!e) return;
+    const d = new Date(e.ts);
+    $("m-when").textContent = isNaN(d) ? e.ts : `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+    $("m-cmd").textContent = `${e.name ?? "write"} ${e.old_value ?? ""} → ${e.new_value ?? ""}`;
+    $("m-src").textContent = e.src_ip ?? "unknown";
+    $("m-dec").textContent = e.decision === "HOLD" ? "HOLD (not delivered)" : e.decision;
+    $("meta").hidden = false;
+    const p = e.prediction, traj = p && p.trajectory, v = p && (p.violations || []).find((x) => !x.pre_existing);
+    if (!traj || traj.length < 2 || !v) return;
+    const idx = /CHLORINE/.test(v.code) ? 2 : 1, unit = idx === 2 ? "mg/L" : "%", name = idx === 2 ? "chlorine" : "tank level";
+    $("fig").hidden = false;
+    $("cap").textContent = `Figure 1. Physics model forecast of ${name} if the command had been delivered. ${v.message}. Dashed line: the ${v.limit} ${unit} guard.`;
+    const NS = "http://www.w3.org/2000/svg", W = 760, H = 240, L = 44, R = 12, T = 12, B = 34;
+    const s = (tag, a, text) => { const n = document.createElementNS(NS, tag); for (const k in a) n.setAttribute(k, a[k]); if (text !== undefined) n.textContent = text; return n; };
+    const step = Math.max(1, Math.floor(traj.length / 300)), pts = traj.filter((_, i) => i % step === 0 || i === traj.length - 1);
+    const ys = pts.map((r) => r[idx]).concat([v.limit]), x1 = pts[pts.length - 1][0] || 1;
+    let y0 = Math.min(...ys), y1 = Math.max(...ys); const pad = (y1 - y0 || 1) * .18; y0 = Math.max(0, y0 - pad); y1 += pad;
+    const X = (t) => L + (W - L - R) * t / x1, Y = (y) => T + (H - T - B) * (1 - (y - y0) / (y1 - y0));
+    const g = s("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": $("cap").textContent });
+    for (let i = 0; i <= 3; i++) { const y = y0 + (y1 - y0) * i / 3; g.append(s("line", { x1: L, x2: W - R, y1: Y(y), y2: Y(y), class: "gridl" }), s("text", { x: L - 8, y: Y(y) + 4, class: "tick", "text-anchor": "end" }, y.toFixed(1))); }
+    for (let i = 0; i <= 4; i++) g.append(s("text", { x: X(x1 * i / 4), y: H - B + 16, class: "tick", "text-anchor": i === 4 ? "end" : i ? "middle" : "start" }, `${Math.round(x1 * i / 4)} min`));
+    g.append(s("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" }), s("line", { x1: L, x2: W - R, y1: Y(v.limit), y2: Y(v.limit), class: "limit" }),
+             s("text", { x: L + 8, y: Y(v.limit) - 6, class: "lbl red" }, `${v.limit} ${unit}`),
+             s("polyline", { points: pts.map((r) => `${X(r[0]).toFixed(1)},${Y(r[idx]).toFixed(1)}`).join(" "), class: "line" }));
+    $("chart").append(g);
+  }
+
   if (!/^evt_\d{4,12}$/.test(id)) return fail("No report id given.");
-  document.getElementById("where").textContent = `Incident report · ${id}${replay ? " · from the recorded run" : ""}`;
-  document.title = `${id} incident report · Backflow`;
+  $("doc-id").textContent = id;
+  $("printed").textContent = `Viewed ${new Date().toLocaleString([], { dateStyle: "medium", timeStyle: "short", hour12: false })}`;
+  document.title = `Incident report ${id} · Backflow`;
   if (replay) {
-    document.getElementById("back").href = "console.html?mode=replay";
+    $("back").href = "console.html?mode=replay";
+    $("note").textContent = "From the recorded run.";
     const s = document.createElement("script");
     s.src = "replay/scenario_0_1.js";
-    s.onload = () => { const t = window.BACKFLOW_REPLAY && window.BACKFLOW_REPLAY.reports[id]; t ? render(t) : fail("This report is not in the recording."); };
+    s.onload = () => { const r = window.BACKFLOW_REPLAY || { reports: {}, events: {} }; header(r.events[id]); r.reports[id] ? render(r.reports[id]) : fail("This report is not in the recording."); };
     s.onerror = () => fail("No recording found.");
     document.head.append(s);
     return;
   }
+  try { const r = await fetch(`/events/${encodeURIComponent(id)}`); if (r.ok) header(await r.json()); } catch (e) { /* the report text may still load */ }
   try {
     const r = await fetch(`/reports/${encodeURIComponent(id)}`);
     if (!r.ok) return fail(r.status === 404 ? `There is no report for ${id} yet. The agent writes it after the operator has answered.` : `Could not load the report (${r.status}).`);

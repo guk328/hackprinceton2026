@@ -11,7 +11,8 @@ python tasks.py demo --sim    # same, but the software station (use when the boa
 ```
 
 Open http://localhost:8000 and sign in as `operator`. The password is `ADMIN_PASSWORD` from
-`.env`; if that is empty, `tasks.py demo` uses `backflow-demo` and prints it.
+`.env`; if that is empty, the gateway falls back to the built-in demo password `backflow-demo`
+(`gateway/auth.py`). Set `ADMIN_PASSWORD` for anything but the demo.
 
 Then, in a second terminal:
 
@@ -20,7 +21,7 @@ python -m attacks.normal_day           # scenario 0: allowed
 python -m attacks.chlorine_overdose    # scenario 1: held with a physics reason
 ```
 
-Approve or Reject under "Held commands" once the agent's message arrives (10 to 20 s).
+Approve or Reject on the centre card once the agent's briefing arrives (10 to 20 s).
 After a Reject the source address is blocked for 60 minutes: press **Reset demo** before the
 next run.
 
@@ -28,9 +29,9 @@ next run.
 
 | Page | What it is |
 |---|---|
-| `index.html` | Landing page: pitch, problem, how it works, who pays, limits, sources |
-| `login.html` | Demo sign-in (one shared account, `POST /login`) |
-| `console.html` | Operator console, live from the API |
+| `index.html` | Company landing page (`landing.css`, `landing.js`) |
+| `login.html` | Sign-in (one account, `POST /login`) |
+| `console.html` | Operator console, live from the API (`app.css`, `data.js`, `console.js`) |
 | `console.html?mode=replay` | The same console playing `replay/scenario_0_1.js`. No sign-in, no gateway needed; it also opens straight from disk |
 | `report.html?id=evt_0003` | The agent's incident report (`GET /reports/{id}`) |
 
@@ -50,5 +51,6 @@ It reads `/events`, `/events/{id}`, `/state`, `/stream`, `/agent/log`, `/operato
 (the operator's ALLOW or BLOCK with the one-time code). There is no route from the site to a
 Modbus write, and nothing here is in the allow/hold path.
 
-A missing DHT11 shows as "no sensor": the station reports 0 for both temperature and
+The console is laid out for a 1420 x 735 px viewport (a 1080p laptop at 150 % scaling) and scales
+up from there. A missing DHT11 shows as "no sensor": the station reports 0 for both temperature and
 humidity until the sensor has answered, and 0 % humidity is outside a DHT11's range.
