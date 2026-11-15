@@ -15,6 +15,7 @@ import time
 
 from gateway.agent.budget import BudgetExceeded
 from gateway.agent.build import Session
+from gateway.agent.reports import template_report, write_report
 
 log = logging.getLogger(__name__)
 
@@ -44,13 +45,15 @@ def template_text(event: dict) -> str:
 
 class Runner:
     def __init__(self, store, channel, blocklist, *, make_agent=None, budget=None, release=None,
-                 held=None, debounce_s: float = DEBOUNCE_S, time_limit_s: float = TIME_LIMIT_S):
+                 held=None, reports_dir=None, debounce_s: float = DEBOUNCE_S,
+                 time_limit_s: float = TIME_LIMIT_S):
         """`make_agent()` builds the agent (called once, lazily, in a worker thread; None or a
         failure means templated texts only). `release(event_id)` is the plain-code release
         used when there is no agent thread to do it."""
         self.store, self.channel, self.blocklist = store, channel, blocklist
         self.make_agent, self.budget, self.release, self.held = make_agent, budget, release, held
         self.debounce_s, self.time_limit_s = debounce_s, time_limit_s
+        self.reports_dir = reports_dir    # None: no reports
         self.sessions: dict[str, Session] = {}
         self._agent = None
         self._agent_failed = make_agent is None
@@ -157,6 +160,8 @@ class Runner:
         self._cost(eid)
 
     def _cost(self, eid):
+        for a in (self.budget.anomalies if self.budget is not None else []):
+            self._step(eid, "status", f"Note: {a}")
         if self.budget is not None and self.budget.calls:
             self._step(eid, "cost", self.budget.summary())
 
@@ -197,8 +202,7 @@ class Runner:
                     out = await asyncio.to_thread(self.release, eid)
                     if not out.get("released"):
                         self._step(eid, "status", f"Not released: {out.get('error')}")
-                return
-            if session.pending:
+            elif session.pending:
                 await self._settle(session, eid, "waiting")
             else:
                 note = ("The operator replied ALLOW (verified). If you judge the command legitimate, "
@@ -206,9 +210,11 @@ class Runner:
                         if reply == "ALLOW" else
                         "The operator replied BLOCK (verified). The gateway has blocked the source "
                         "and discarded the held command.")
+                note += (" Then get the timeline from forensics, have the reporter write the "
+                         "incident report, and give your final verdict in three lines."
+                         if self.reports_dir is not None else " Then give your final verdict.")
                 state = await asyncio.wait_for(asyncio.to_thread(
-                    self._run, session.tell, eid, note + " Then give your final verdict."),
-                    self.time_limit_s)
+                    self._run, session.tell, eid, note), self.time_limit_s)
                 await self._settle(session, eid, state)
         except Exception as e:
             log.exception("agent could not process the reply")
@@ -218,4 +224,14 @@ class Runner:
                 out = await asyncio.to_thread(self.release, eid)
                 if not out.get("released"):
                     self._step(eid, "status", f"Not released: {out.get('error')}")
+        self._ensure_report(eid)
         self._cost(eid)
+
+    def _ensure_report(self, eid: str):
+        """Every answered incident ends with a report; plain code writes it if the agent did not."""
+        if self.reports_dir is None or (self.reports_dir / f"{eid}.md").is_file():
+            return
+        try:
+            write_report(self.store, self.reports_dir, eid, template_report(self.store, eid))
+        except Exception:
+            log.exception("could not write the report")

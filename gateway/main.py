@@ -46,11 +46,14 @@ def build(cfg: dict, store, loop) -> dict:
         from gateway.agent.build import INTERRUPT_ON, build_agent
         tools = make_read_tools(store, poller) + make_action_tools(
             store, poller, blocklist, channel, writer, held=proxy.held, refresh=refresh)
-        return build_agent(tools, budget=budget, interrupt_on=INTERRUPT_ON)
+        from gateway.agent.reports import make_save_report
+        from gateway.agent.subagents import make_subagents
+        subs = make_subagents(make_read_tools(store, poller), make_save_report(store, REPORTS_DIR))
+        return build_agent(tools, budget=budget, interrupt_on=INTERRUPT_ON, subagents=subs)
 
     runner = Runner(store, channel, blocklist, budget=budget, held=proxy.held,
                     make_agent=make_agent if os.getenv("AGENT_MODEL") else None,
-                    release=lambda event_id: release(event_id, **kit))
+                    release=lambda event_id: release(event_id, **kit), reports_dir=REPORTS_DIR)
     def do_reset():
         return reset(store, blocklist=blocklist, held=proxy.held, channel=channel, runner=runner,
                      poller=poller, writer=writer, reports_dir=REPORTS_DIR)

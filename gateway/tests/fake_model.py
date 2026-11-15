@@ -14,6 +14,7 @@ class FakeModel(BaseChatModel):
     script: list = []         # AIMessages (or Exceptions to raise), used in order
     prompts: list = []        # the message lists the model was sent
     tools_seen: list = []     # tool names offered at the last bind
+    binds: list = []          # tool names of every bind, in order (main agent and subagents)
     usage: dict = {"input_tokens": 1000, "output_tokens": 100, "total_tokens": 1100}
     delay_s: float = 0.0      # per call, to test time limits
 
@@ -25,6 +26,7 @@ class FakeModel(BaseChatModel):
         self.tools_seen[:] = [getattr(t, "name", None) or (t.get("name") if isinstance(t, dict)
                                                            else getattr(t, "__name__", str(t)))
                               for t in tools]
+        self.binds.append(list(self.tools_seen))
         return self
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):

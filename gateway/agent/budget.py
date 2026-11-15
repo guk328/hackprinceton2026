@@ -50,12 +50,14 @@ class Budget(BaseCallbackHandler):
         self._mem = 0.0                   # ledger when there is no store
         self.calls = self.input_tokens = self.output_tokens = 0
         self.run_cost = 0.0
+        self.anomalies: list[str] = []    # model answers that were cut off or empty (any agent)
 
     def start_run(self, event_id=None):
         with self._lock:
             self.event_id = event_id
             self.calls = self.input_tokens = self.output_tokens = 0
             self.run_cost = 0.0
+            self.anomalies = []
 
     def spent(self) -> float:
         return self.store.total_spend() if self.store is not None else self._mem
@@ -72,7 +74,15 @@ class Budget(BaseCallbackHandler):
 
     def on_llm_end(self, response, **kwargs):
         try:
-            usage = response.generations[0][0].message.usage_metadata or {}
+            msg = response.generations[0][0].message
+            usage = msg.usage_metadata or {}
+            stop = (msg.response_metadata or {}).get("stop_reason")
+            empty = not (msg.text or "").strip() and not msg.tool_calls
+            if stop == "max_tokens" or empty:
+                self.anomalies.append(
+                    f"model answer {'cut off at the token limit' if stop == 'max_tokens' else 'empty'}"
+                    f" (stop_reason={stop}, output_tokens={usage.get('output_tokens')}, "
+                    f"invalid_tool_calls={len(msg.invalid_tool_calls or [])})")
         except (AttributeError, IndexError):
             usage = {}
         i, o = int(usage.get("input_tokens", 0)), int(usage.get("output_tokens", 0))

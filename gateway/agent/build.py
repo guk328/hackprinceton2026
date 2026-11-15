@@ -24,7 +24,7 @@ from langgraph.types import Command
 from gateway.agent.prompt import INCIDENT_PROMPT, brief
 
 DEFAULT_MODEL = "anthropic:claude-haiku-5-5"
-MAX_OUTPUT_TOKENS = 1200     # per model call
+MAX_OUTPUT_TOKENS = 4000     # per model call; a cut-off answer loses its tool call entirely
 MAX_MODEL_CALLS = 14         # per run (start, resume and tell are each a run)
 MODEL_TIMEOUT_S = 40
 STEP_TEXT_MAX = 600
