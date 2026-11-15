@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Backflow</title>
+<link rel="stylesheet" href="site.css?v=3">
+</head>
+<body>
+<header class="bar">
+  <a class="name" href="index.html">Backflow</a>
+  <span class="where">Operator sign-in</span>
+</header>
+<main class="login-wrap">
+  <form class="login-box" id="form">
+    <h1>Operator sign-in</h1>
+    <p class="muted">Demo login for the hackathon build.</p>
+    <label for="user">Account</label>
+    <input id="user" value="operator" readonly aria-describedby="user-note">
+    <label for="pw">Password</label>
+    <input id="pw" type="password" autocomplete="current-password" required autofocus>
+    <button type="submit">Sign in</button>
+    <div class="err" id="err" role="alert"></div>
+    <div class="notice" id="user-note">
+      <b>What this login is, and is not.</b>
+      <ul>
+        <li>One shared operator account. There are no separate users or roles.</li>
+        <li>It guards the operator actions: reading the operator's messages, Approve and Reject, and the demo reset. The command feed and plant values are readable without it.</li>
+        <li>The session is a signed cookie that lasts 12 hours and ends when the gateway restarts. Wrong passwords are rate-limited.</li>
+        <li>The demo runs over plain HTTP on a local hotspot. A real deployment needs TLS and per-person accounts. We have not built those.</li>
+      </ul>
+    </div>
+    <p style="margin-top:16px"><a href="console.html?mode=replay">Watch the recorded run instead (no sign-in)</a></p>
+  </form>
+</main>
+<script>
+"use strict";
+(async () => {
+  const next = "console.html";
+  const err = document.getElementById("err"), pw = document.getElementById("pw");
+  try {
+    const me = await (await fetch("/me", { credentials: "same-origin" })).json();
+    if (me.admin === true) location.replace(next);
+  } catch (e) { err.textContent = "The gateway is not reachable. The recorded run still works."; }
+  document.getElementById("form").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    err.textContent = "";
+    try {
+      const r = await fetch("/login", { method: "POST", credentials: "same-origin",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ password: pw.value }) });
+      pw.value = "";
+      if (r.ok) location.replace(next);
+      else err.textContent = r.status === 429 ? "Too many attempts. Wait a minute." : "Wrong password.";
+    } catch (e) { err.textContent = "The gateway is not reachable."; }
+  });
+})();
+</script>
+</body>
+</html>

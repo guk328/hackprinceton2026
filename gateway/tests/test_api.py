@@ -117,9 +117,11 @@ def test_stream_delivers_new_events_without_trajectory(store):
 def test_dashboard_served_at_root_without_shadowing_routes(client, store):
     r = client.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
-    assert '<script src="app.js">' in r.text
-    js = client.get("/app.js")
+    assert 'href="login.html"' in r.text                          # the landing page
+    assert '<script src="console.js">' in client.get("/console.html").text
+    js = client.get("/data.js")
     assert js.status_code == 200 and 'new EventSource("/stream")' in js.text
+    assert client.get("/replay/scenario_0_1.js").status_code == 200   # replay works offline
     store.save_event(EVENT)
     assert client.get("/events").json()[0]["id"] == "evt_0001"   # API routes still win
     assert client.get("/nope.html").status_code == 404

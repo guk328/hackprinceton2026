@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident report · Backflow</title>
+<link rel="stylesheet" href="site.css?v=3">
+</head>
+<body>
+<header class="bar">
+  <a class="name" href="index.html">Backflow</a>
+  <span class="where" id="where">Incident report</span>
+</header>
+<div class="report-tools">
+  <a class="btn quiet" id="back" href="console.html">Back to the console</a>
+  <button class="quiet" onclick="print()">Print</button>
+  <span class="muted" id="note">Drafted by the agent from the gateway's stored events. Check it before filing.</span>
+</div>
+<article class="report" id="report"><p class="muted">Loading…</p></article>
+<script>
+// Renders the agent's markdown report. A small renderer of our own: every piece of text goes
+// in with textContent, so nothing in a report can run as HTML.
+"use strict";
+(async () => {
+  const q = new URLSearchParams(location.search), id = q.get("id") || "", replay = q.get("mode") === "replay" || location.protocol === "file:";
+  const box = document.getElementById("report");
+  const el = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) inline(n, text); return n; };
+  function inline(node, text) {               // **bold** and `code`
+    for (const part of String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/)) {
+      if (!part) continue;
+      if (part.startsWith("**")) { const b = document.createElement("b"); b.textContent = part.slice(2, -2); node.append(b); }
+      else if (part.startsWith("`")) { const c = document.createElement("code"); c.textContent = part.slice(1, -1); node.append(c); }
+      else node.append(document.createTextNode(part));
+    }
+  }
+  function render(md) {
+    box.replaceChildren();
+    const lines = md.replace(/\r/g, "").split("\n");
+    let list = null, table = null, pre = null, para = [];
+    const flush = () => { if (para.length) { box.append(el("p", para.join(" "))); para = []; } list = table = null; };
+    for (const line of lines) {
+      if (pre) { if (line.startsWith("```")) { pre = null; } else pre.textContent += line + "\n"; continue; }
+      if (line.startsWith("```")) { flush(); pre = document.createElement("pre"); box.append(pre); continue; }
+      const h = /^(#{1,4})\s+(.*)$/.exec(line), li = /^\s*(?:[-*]|\d+\.)\s+(.*)$/.exec(line);
+      if (h) { flush(); box.append(el(`h${Math.min(3, h[1].length)}`, h[2])); }
+      else if (li) {
+        if (para.length) { box.append(el("p", para.join(" "))); para = []; }
+        if (!list) { table = null; list = document.createElement(/^\s*\d+\./.test(line) ? "ol" : "ul"); box.append(list); }
+        list.append(el("li", li[1]));
+      } else if (/^\s*\|.*\|\s*$/.test(line)) {
+        if (/^\s*\|[\s:|-]+\|\s*$/.test(line)) continue;
+        if (para.length) { box.append(el("p", para.join(" "))); para = []; }
+        const first = !table;
+        if (first) { list = null; table = document.createElement("table"); box.append(table); }
+        const tr = document.createElement("tr");
+        for (const cell of line.trim().slice(1, -1).split("|")) tr.append(el(first ? "th" : "td", cell.trim()));
+        table.append(tr);
+      } else if (!line.trim()) flush();
+      else if (/^\s*(---|\*\*\*)\s*$/.test(line)) flush();
+      else { list = table = null; para.push(line.trim()); }
+    }
+    flush();
+  }
+  const fail = (text) => { box.replaceChildren(el("p", text)); };
+  if (!/^evt_\d{4,12}$/.test(id)) return fail("No report id given.");
+  document.getElementById("where").textContent = `Incident report · ${id}${replay ? " · from the recorded run" : ""}`;
+  document.title = `${id} incident report · Backflow`;
+  if (replay) {
+    document.getElementById("back").href = "console.html?mode=replay";
+    const s = document.createElement("script");
+    s.src = "replay/scenario_0_1.js";
+    s.onload = () => { const t = window.BACKFLOW_REPLAY && window.BACKFLOW_REPLAY.reports[id]; t ? render(t) : fail("This report is not in the recording."); };
+    s.onerror = () => fail("No recording found.");
+    document.head.append(s);
+    return;
+  }
+  try {
+    const r = await fetch(`/reports/${encodeURIComponent(id)}`);
+    if (!r.ok) return fail(r.status === 404 ? `There is no report for ${id} yet. The agent writes it after the operator has answered.` : `Could not load the report (${r.status}).`);
+    render(await r.text());
+  } catch (e) { fail("The gateway is not reachable."); }
+})();
+</script>
+</body>
+</html>

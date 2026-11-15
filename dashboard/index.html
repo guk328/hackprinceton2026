@@ -3,46 +3,126 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backflow gateway</title>
-<link rel="stylesheet" href="style.css">
+<title>Backflow: a physics check in front of the pump controller</title>
+<link rel="stylesheet" href="site.css?v=3">
 </head>
 <body>
-<header>
-  <h1>Backflow</h1>
-  <span class="tag">safety gateway · pump station 1</span>
-  <span id="status" class="down">connecting…</span>
-  <span class="spacer"></span>
-  <form id="login" hidden autocomplete="off">
-    <input id="pw" type="password" placeholder="admin password" aria-label="Admin password" required>
-    <button class="ghost" type="submit">Log in</button>
-    <span id="login-err"></span>
-  </form>
-  <span id="who" hidden>admin</span>
-  <span id="admin-tools" hidden></span>
-  <button id="logout" class="ghost" hidden>Log out</button>
+<header class="bar">
+  <a class="name" href="index.html">Backflow</a>
+  <span class="grow"></span>
+  <nav>
+    <a href="#problem">Problem</a>
+    <a href="#how">How it works</a>
+    <a href="#business">Who pays</a>
+    <a href="#limits">Limits</a>
+    <a href="#team">Team</a>
+  </nav>
+  <a class="btn" href="login.html">Operator sign-in</a>
 </header>
-<main>
-  <section id="col-feed" aria-label="Commands">
-    <h2>Commands</h2>
-    <ul id="feed"></ul>
-    <p id="empty" class="empty">No commands yet.</p>
-  </section>
-  <section id="col-plant" aria-label="Plant" hidden></section>
-  <section id="col-right">
-    <div id="phone" aria-label="Operator phone">
-      <h2>Operator's phone</h2>
-      <div id="inbox"></div>
-      <p id="no-texts" class="empty">No texts.</p>
-      <p id="need-login" class="empty" hidden>Log in as admin to see the texts and reply.</p>
-    </div>
-    <div id="agent" aria-label="Agent activity">
-      <h2>Agent</h2>
-      <ol id="steps"></ol>
-      <p id="no-steps" class="empty">The agent wakes up when a command is held.</p>
+
+<div class="page">
+  <section class="lead">
+    <h1>A safety gateway that checks every command to a water plant against a physics model before it runs.</h1>
+    <p>Backflow sits between remote access and the pump controller. A command that would overdose chlorine, overflow the tank or drain the town's pressure is held, and the operator on call decides.</p>
+    <div class="actions">
+      <a class="btn" href="login.html">Open the operator console</a>
+      <a class="btn quiet" href="console.html?mode=replay">Watch a recorded run</a>
     </div>
   </section>
-</main>
-<script src="app.js"></script>
-<script src="plant.js"></script>
+
+  <section class="sect" id="problem">
+    <h2>The problem</h2>
+    <div class="body">
+      <p>A small water plant is run by a controller (a PLC) that a contractor or operator reaches remotely. The protocol it speaks, Modbus, has no idea who is sending a command or what the command will do. If the frame is well formed, the controller obeys.</p>
+      <div class="fact">
+        On 30 July 2026 the FBI and EPA reported incidents in at least seven states in which attackers changed addresses and passwords on internet-facing PLCs at water and wastewater systems. Reported consequences included lost monitoring or control, pressure loss and flooding.
+        <cite>Source 1: FBI / EPA public service announcement, 30 July 2026.</cite>
+      </div>
+      <div class="fact">
+        91% of US community water systems serve 10,000 people or fewer.
+        <cite>Source 2: EPA report to Congress, November 2024, using fiscal year 2021 data (49,738 community water systems).</cite>
+      </div>
+      <p>We built for the utility with one operator on call. A firewall can tell that operator whether a packet was allowed. It cannot tell them what the command would have done to the water.</p>
+    </div>
+  </section>
+
+  <section class="sect" id="how">
+    <h2>How it works</h2>
+    <div class="body">
+      <ol class="flow">
+        <li><b>A command arrives</b><span>Remote access points at the gateway, not at the controller. Every Modbus write is parsed before anything is forwarded.</span></li>
+        <li><b>Policy check</b><span>Plain code checks the register's allowed range, the size of the change, the source, the time of day and whether someone is physically at the cabinet.</span></li>
+        <li><b>Physics check</b><span>A model of the tank and the chlorine dosing runs the command forward and reports what crosses a limit, and after how many minutes.</span></li>
+        <li><b>Allow or hold</b><span>A safe command is forwarded. An unsafe one is not: the sender gets a Modbus exception and the station never sees it. This decision takes milliseconds and involves no AI.</span></li>
+        <li><b>The operator decides</b><span>The operator gets one plain-language message with the reason and can approve or reject. An approval is checked against the physics model again before anything is released.</span></li>
+        <li><b>The agent responds</b><span>An AI agent investigates the held command, can block the source, restore the last known good settings or put the station in safe mode, and drafts the incident report. It cannot send arbitrary commands.</span></li>
+      </ol>
+      <h3>What the console shows for each command</h3>
+      <div class="legend">
+        <div><span class="badge ALLOW"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8.5 6 12.5 14 3.5" fill="none" stroke="currentColor" stroke-width="2.6"/></svg>ALLOW</span> forwarded to the station</div>
+        <div><span class="badge HOLD"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 2.5v11M11 2.5v11" fill="none" stroke="currentColor" stroke-width="3.2"/></svg>HOLD</span> waiting for the operator</div>
+        <div><span class="badge DENY"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3l10 10M13 3 3 13" fill="none" stroke="currentColor" stroke-width="2.6"/></svg>DENY</span> refused outright</div>
+      </div>
+      <h3>Two rules we hold ourselves to</h3>
+      <p><b>No AI in the allow or hold path.</b> The decision is made by policy code and the physics model. If the physics check fails or times out, the command is held.</p>
+      <p><b>The agent has no raw write tool.</b> Its only actions are "revert to last known good", "enter safe mode" and "block a source". Releasing a held command needs the operator.</p>
+      <h3>What is real in the demo, and what is simulated</h3>
+      <table class="plain">
+        <tr><th>Real</th><th>Simulated</th></tr>
+        <tr><td>Modbus TCP traffic, the gateway and the hold</td><td>Tank level and chlorine, computed by a plant model running as a digital twin</td></tr>
+        <tr><td>Relays switching the pump and doser outputs, buzzer, display</td><td>The town: a dial on the board sets water demand</td></tr>
+        <tr><td>On-site sensing: motion sensor and cabinet light sensor</td><td>The PLC itself: an ESP32 stands in for it</td></tr>
+        <tr><td>The agent, its messages and its incident report</td><td>The operator's phone: messages appear in the console, not by SMS</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="sect" id="business">
+    <h2>Who pays, and why</h2>
+    <div class="body">
+      <p><b>The buyer is the controls integrator.</b> Small utilities do not buy security products. They pay the firm that installed their PLC and maintains it. Backflow is one box per station that the integrator installs and bills as a monthly line item. Cyber insurers and state grant programs are the second route.</p>
+      <p><b>Pricing idea.</b> The box at hardware cost, plus a monthly fee per station in the range utilities already pay for remote monitoring. One published example of that range: Sensaphone lists cellular monitoring service for its Sentinel unit at $24.95 per month (source 4). This is our hypothesis. We have not sold a unit, and we have not validated the price with a buyer.</p>
+      <p><b>Why it is cheaper than an incident.</b> A chlorine overdose or a drained tank means a do-not-drink or boil-water notice, flushing the system, lab samples, overtime, and a report to the state regulator. We do not have a sourced dollar figure for that, so we do not quote one. Our argument is the asymmetry: with Backflow, the same command costs the operator one message and one decision.</p>
+    </div>
+  </section>
+
+  <section class="sect" id="limits">
+    <h2>Limits of this build</h2>
+    <div class="body">
+      <p>This was built in one weekend. A judge should know where the edges are.</p>
+      <ul>
+        <li>The plant model is a single well-mixed tank with demo parameters. It has not been calibrated against a real installation.</li>
+        <li>The chlorine alarm line is 4.0 mg/L, the EPA maximum residual disinfectant level (source 3). Compliance with that level is judged on a running annual average, so a crossing in our model is an engineering alarm, not a regulatory violation.</li>
+        <li>The overflow and low-pressure guards (95% and 15% tank level) are demo values, not site-specific limits.</li>
+        <li>The operator sign-in is a demo login: one shared account over plain HTTP on a local network.</li>
+        <li>Operator messages appear in the console. SMS delivery is not built.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sect" id="team">
+    <h2>Team</h2>
+    <div class="body">
+      <p>Three engineering students, HackPrinceton Fall 2026, Business &amp; Enterprise track.</p>
+      <table class="plain">
+        <tr><th>Role</th><th>Built</th></tr>
+        <tr><td>Computer engineering</td><td>The gateway, policy engine, agent, API and this site</td></tr>
+        <tr><td>Electrical engineering</td><td>The ESP32 station: firmware, relays, sensors, display</td></tr>
+        <tr><td>Mechanical engineering</td><td>The plant physics model, the digital twin and the attack scenarios</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <b>Sources</b>
+    <ol>
+      <li>FBI / EPA public service announcement, 30 July 2026: <a href="https://www.fbi.gov/investigate/cyber/alerts/2026/malicious-cyber-actors-targeting-water-and-wastewater-sector-internet--facing-programmable-logic-controllers-causing-operational-disruptions">Malicious cyber actors targeting water and wastewater sector internet-facing programmable logic controllers</a>.</li>
+      <li>EPA, report to Congress, November 2024, section "System Size": <a href="https://www.epa.gov/system/files/documents/2025-01/final_508_epa_reporttocongress_11-19-24_0.pdf">epa.gov (PDF)</a>.</li>
+      <li>40 CFR 141.65(a), maximum residual disinfectant levels: <a href="https://www.ecfr.gov/current/title-40/chapter-I/subchapter-D/part-141/subpart-G/section-141.65">ecfr.gov</a>.</li>
+      <li>Sensaphone Sentinel product page, price as listed in November 2026: <a href="https://sensaphone.com/products/sensaphone-sentinel-monitoring-system-with-cellular-modem">sensaphone.com</a>.</li>
+    </ol>
+    <p style="margin-top:16px">Backflow is a hackathon prototype. It is not a certified safety system.</p>
+  </footer>
+</div>
 </body>
 </html>

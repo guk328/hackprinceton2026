@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backflow operator console</title>
+<link rel="stylesheet" href="site.css?v=3">
+</head>
+<body class="console">
+<header class="bar">
+  <a class="name" href="index.html">Backflow</a>
+  <span class="where">Operator console · Pump station 1</span>
+  <span class="grow"></span>
+  <span id="who" class="muted" hidden>Signed in as operator (demo login)</span>
+  <button id="reset" class="quiet small" hidden>Reset demo</button>
+  <button id="logout" class="quiet small" hidden>Sign out</button>
+</header>
+
+<div id="modebar" class="modebar live" role="status">
+  <span class="tag" id="mode-tag">LIVE</span>
+  <span id="mode-text">Connecting to the gateway…</span>
+  <span class="grow"></span>
+  <span id="player" hidden>
+    <button id="pl-toggle">Pause</button>
+    <button id="pl-restart">Restart</button>
+    <button class="pl-speed" data-x="1" aria-pressed="true">1×</button>
+    <button class="pl-speed" data-x="2" aria-pressed="false">2×</button>
+    <button class="pl-speed" data-x="4" aria-pressed="false">4×</button>
+    <progress id="pl-bar" max="1" value="0"></progress>
+  </span>
+  <a id="mode-switch" href="console.html?mode=replay">Switch to recorded replay</a>
+</div>
+
+<section class="plant" id="plant" aria-label="Plant now">
+  <div class="tile tank">
+    <div class="gauge" aria-hidden="true"><div class="fill" id="tank-fill"></div><div class="sp" id="tank-hi"></div><div class="sp" id="tank-lo"></div></div>
+    <div><div class="l">Tank level</div><div class="v" id="tank-v">–</div><div class="s" id="tank-s">waiting for the station</div></div>
+  </div>
+  <div class="tile" id="t-cl"><div class="l">Chlorine</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile" id="t-pump"><div class="l">Pump</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile" id="t-doser"><div class="l">Doser</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile" id="t-mode"><div class="l">Mode</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile" id="t-demand"><div class="l">Town demand</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile" id="t-site"><div class="l">On site</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile" id="t-cab"><div class="l">Cabinet air</div><div class="v">–</div><div class="s"></div></div>
+  <div class="tile health" id="t-health"><div class="l">Station link</div><div class="v">–</div><div class="s"></div></div>
+</section>
+
+<main class="cols">
+  <section class="panel" aria-label="Command feed">
+    <h2>Commands <span id="feed-count">newest first</span></h2>
+    <div class="scroll">
+      <ul class="feed" id="feed"></ul>
+      <p class="empty" id="feed-empty">No commands yet. Every write sent to the gateway appears here with its decision.</p>
+    </div>
+  </section>
+
+  <div class="mid">
+    <section class="panel held" aria-label="Held commands">
+      <h2>Held commands <span id="held-count"></span></h2>
+      <div class="scroll">
+        <div id="held"></div>
+        <p class="empty" id="held-empty">Nothing is waiting for you. A held command was not sent to the station; it appears here for your decision.</p>
+      </div>
+    </section>
+    <section class="panel forecast" aria-label="Forecast">
+      <h2>What the command would do <span id="fc-title">physics model forecast</span></h2>
+      <div class="head"><div class="sub" id="fc-sub">Select a command to see its forecast.</div></div>
+      <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
+    </section>
+  </div>
+
+  <section class="panel" aria-label="Agent activity">
+    <h2>Agent activity <span>what it did and why</span></h2>
+    <div class="scroll" id="agent-scroll">
+      <ol class="steps" id="steps"></ol>
+      <p class="empty" id="steps-empty">The agent starts only after a command has been held or denied. It has no part in the allow or hold decision.</p>
+    </div>
+  </section>
+</main>
+
+<div class="overlay" id="overlay" hidden>
+  <div class="box">
+    <h2 id="ov-title">The gateway is not reachable</h2>
+    <p id="ov-text">This page could not reach the gateway API. You can still show the recorded run.</p>
+    <p><a class="btn" href="console.html?mode=replay">Open the recorded replay</a> <a class="btn quiet" href="console.html">Try live again</a></p>
+  </div>
+</div>
+
+<script src="data.js?v=3"></script>
+<script src="console.js?v=3"></script>
+</body>
+</html>
