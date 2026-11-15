@@ -15,6 +15,7 @@ from gateway.agent.runner import Runner
 from gateway.agent.tools_act import make_action_tools, release
 from gateway.agent.tools_read import make_read_tools
 from gateway.api import create_app
+from gateway.auth import Auth
 from gateway.blocklist import Blocklist
 from gateway.notify import OperatorChannel
 from gateway.proxy import Proxy, config
@@ -61,7 +62,7 @@ async def run(cfg: dict, api_host: str, api_port: int):
     await g["runner"].start()
     log.info("agent model: %s, spend so far $%.4f of $%.2f", os.getenv("AGENT_MODEL") or "none",
              g["budget"].spent(), g["budget"].ceiling)
-    app = create_app(store, g["poller"], g["proxy"]._station_view, channel=g["channel"])
+    app = create_app(store, g["poller"], g["proxy"]._station_view, channel=g["channel"], auth=Auth())
     server = uvicorn.Server(uvicorn.Config(app, host=api_host, port=api_port, log_level="info"))
     try:
         await server.serve()

@@ -138,14 +138,46 @@ function renderInbox(list) {
   }
 }
 
-let inboxBusy = false;
+let inboxBusy = false, admin = false;
 async function loadInbox() {
-  if (inboxBusy) return;
+  if (inboxBusy || !admin) return;
   inboxBusy = true;
   try { renderInbox(await getJSON("/operator/inbox")); }
-  catch (e) { /* not logged in or gateway down: keep what is shown */ }
+  catch (e) { if (String(e).includes("401")) checkAdmin(); }
   finally { inboxBusy = false; }
 }
+
+// ------------------------------------------------------------------ admin login
+
+function showAdmin(is) {
+  admin = is;
+  $("login").hidden = is;
+  for (const id of ["who", "logout", "admin-tools"]) $(id).hidden = !is;
+  $("need-login").hidden = is;
+  if (!is) { $("inbox").replaceChildren(); $("no-texts").hidden = true; }
+  else loadInbox();
+}
+
+async function checkAdmin() {
+  try { showAdmin((await getJSON("/me")).admin === true); } catch (e) { showAdmin(false); }
+}
+
+$("login").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  $("login-err").textContent = "";
+  try {
+    const r = await fetch("/login", { method: "POST", credentials: "same-origin",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ password: $("pw").value }) });
+    $("pw").value = "";
+    if (r.ok) showAdmin(true);
+    else $("login-err").textContent = r.status === 429 ? "Too many tries, wait a minute" : "Wrong password";
+  } catch (e) { $("login-err").textContent = "Gateway not reachable"; }
+});
+
+$("logout").addEventListener("click", async () => {
+  try { await fetch("/logout", { method: "POST", credentials: "same-origin" }); } catch (e) { /* ignore */ }
+  showAdmin(false);
+});
 
 // ------------------------------------------------------------------ wiring
 
@@ -163,7 +195,9 @@ function connect() {
   es.onerror = () => { status.textContent = "reconnecting…"; status.className = "down"; };
 }
 
-window.backflow = { el, getJSON, fmtTime, listeners, rows, loadInbox, selected: () => selected };
+window.backflow = { el, getJSON, fmtTime, listeners, rows, loadInbox, selected: () => selected,
+                    isAdmin: () => admin };
+checkAdmin();
 connect();
 backfill();
 setInterval(loadInbox, 5000);     // expiry countdowns, and a safety net if a stream message is lost

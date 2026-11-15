@@ -12,7 +12,14 @@
   <span class="tag">safety gateway · pump station 1</span>
   <span id="status" class="down">connecting…</span>
   <span class="spacer"></span>
-  <span id="who"></span>
+  <form id="login" hidden autocomplete="off">
+    <input id="pw" type="password" placeholder="admin password" aria-label="Admin password" required>
+    <button class="ghost" type="submit">Log in</button>
+    <span id="login-err"></span>
+  </form>
+  <span id="who" hidden>admin</span>
+  <span id="admin-tools" hidden></span>
+  <button id="logout" class="ghost" hidden>Log out</button>
 </header>
 <main>
   <section id="col-feed" aria-label="Commands">
@@ -26,6 +33,7 @@
       <h2>Operator's phone</h2>
       <div id="inbox"></div>
       <p id="no-texts" class="empty">No texts.</p>
+      <p id="need-login" class="empty" hidden>Log in as admin to see the texts and reply.</p>
     </div>
     <div id="agent" aria-label="Agent activity">
       <h2>Agent</h2>

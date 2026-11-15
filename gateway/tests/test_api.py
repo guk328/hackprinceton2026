@@ -10,6 +10,7 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from gateway.api import create_app
+from gateway.auth import Auth
 from gateway.events import EventStore
 from gateway.notify import OperatorChannel
 from gateway.station import StationSnapshot
@@ -31,8 +32,10 @@ def store():
 def client(store, tmp_path):
     (tmp_path / "evt_0001.md").write_text("# report\n")
     app = create_app(store, FakePoller(), lambda snap: {"presence": False},
-                     channel=OperatorChannel(store), reports_dir=tmp_path)
-    return TestClient(app)
+                     channel=OperatorChannel(store), auth=Auth("pw"), reports_dir=tmp_path)
+    c = TestClient(app)
+    assert c.post("/login", json={"password": "pw"}).status_code == 200
+    return c
 
 
 def test_events_list_omits_trajectory_but_detail_has_it(client, store):

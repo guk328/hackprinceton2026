@@ -25,6 +25,11 @@ button { font:inherit; font-weight:700; border:0; border-radius:8px; padding:10p
 button:disabled { opacity:.5; cursor:default; }
 button.ghost { background:none; color:var(--muted); border:1px solid var(--line); font-weight:500; padding:5px 10px; font-size:13px; }
 
+#login { display:flex; gap:8px; align-items:center; }
+#login input { font:inherit; font-size:14px; padding:5px 8px; border-radius:6px; border:1px solid var(--line);
+               background:var(--row); color:var(--fg); width:170px; }
+#login-err { color:#ff8b85; font-size:13px; }
+
 /* command feed */
 #feed { list-style:none; margin:0; padding:0; display:grid; gap:8px; }
 .ev { display:grid; grid-template-columns:96px 1fr; gap:2px 12px; align-items:center;
