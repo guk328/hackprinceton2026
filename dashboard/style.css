@@ -1,6 +1,7 @@
 :root { --bg:#0f1419; --panel:#161c23; --fg:#e6e6e6; --muted:#8a949e; --row:#1d252e; --line:#2a333d;
         --allow:#1f9d55; --hold:#d98e04; --deny:#d1342f; --accent:#4aa3ff; }
 * { box-sizing: border-box; }
+[hidden] { display:none !important; }
 html, body { height:100%; }
 body { margin:0; background:var(--bg); color:var(--fg); display:flex; flex-direction:column;
        font:16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
@@ -72,3 +73,31 @@ button.ghost { background:none; color:var(--muted); border:1px solid var(--line)
 .step.head { grid-template-columns:1fr; margin-top:10px; color:var(--muted); font-size:13px;
              border-top:1px solid var(--line); padding-top:8px; }
 @media (max-width:900px) { main, main.three { grid-template-columns:1fr; } main > section { overflow:visible; } }
+
+/* plant view */
+.tiles { display:grid; grid-template-columns:repeat(2, 1fr); gap:10px; }
+.tile { background:var(--row); border-radius:8px; padding:10px 12px; border-left:5px solid #3a4652; }
+.tile .l { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); }
+.tile .v { font-size:26px; font-weight:700; line-height:1.2; }
+.tile .s { font-size:13px; color:var(--muted); }
+.tile.on { border-left-color:var(--allow); }
+.tile.warn { border-left-color:var(--deny); }
+.tile.tank { grid-row:span 2; display:flex; gap:14px; align-items:stretch; }
+.tank .bar { position:relative; width:54px; min-height:150px; background:#10161c; border:1px solid var(--line);
+             border-radius:6px; overflow:hidden; flex:none; }
+.tank .fill { position:absolute; left:0; right:0; bottom:0; background:var(--accent); transition:height .8s; }
+.tank .sp { position:absolute; left:0; right:0; height:0; border-top:2px dashed #e6e6e6; opacity:.7; }
+#col-plant.offline .tile { opacity:.6; }
+.chart-title { font-size:18px; font-weight:600; }
+.chart-sub { color:#c9d1d9; margin:2px 0 8px; min-height:1.4em; }
+.chart svg { width:100%; height:auto; display:block; }
+.chart .grid { stroke:#27313b; stroke-width:1; }
+.chart .tick { fill:var(--muted); font-size:13px; }
+.chart .line { fill:none; stroke:var(--accent); stroke-width:2.5; stroke-linejoin:round; }
+.chart .limit { stroke:var(--deny); stroke-width:2; stroke-dasharray:7 5; }
+.chart .limit-label, .chart .cross-label { fill:var(--fg); font-size:14px; font-weight:600; }
+.chart .cross { fill:var(--deny); stroke:var(--panel); stroke-width:2; }
+.chart .hair { stroke:#8a949e; stroke-width:1; }
+.chart .dot { fill:var(--accent); stroke:var(--panel); stroke-width:2; }
+.tip { display:inline-block; background:var(--row); border:1px solid var(--line); border-radius:6px; padding:4px 10px;
+       font-size:14px; font-variant-numeric:tabular-nums; }

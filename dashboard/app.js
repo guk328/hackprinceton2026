@@ -83,7 +83,8 @@ function addStep(s) {
     lastStepEvent = s.event_id;
   }
   const li = el("li", `step ${LABEL[s.kind] ? s.kind : "status"}`);
-  li.append(el("span", "k", LABEL[s.kind] ?? s.kind), el("span", "t", s.text ?? ""));
+  const text = ["verdict", "note"].includes(s.kind) ? String(s.text ?? "").replace(/\*\*/g, "") : s.text ?? "";
+  li.append(el("span", "k", LABEL[s.kind] ?? s.kind), el("span", "t", text));
   if (s.kind === "report" && s.event_id) {
     const a = el("a", "", " open report");
     a.href = `/reports/${encodeURIComponent(s.event_id)}`; a.target = "_blank"; a.style.color = "var(--accent)";
@@ -182,7 +183,12 @@ $("logout").addEventListener("click", async () => {
 // ------------------------------------------------------------------ wiring
 
 async function backfill() {
-  try { for (const e of await getJSON("/events?limit=200")) addEvent(e, false); } catch (e) { console.warn(e); }
+  try {
+    const list = await getJSON("/events?limit=200");
+    for (const e of list) addEvent(e, false);
+    const latest = list.find((e) => e.decision !== "ALLOW");     // newest first
+    if (!selected && latest) select(latest);
+  } catch (e) { console.warn(e); }
   try { for (const s of await getJSON("/agent/log?limit=300")) addStep(s); } catch (e) { console.warn(e); }
   loadInbox();
 }
