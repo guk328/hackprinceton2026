@@ -1,322 +1,103 @@
 # Backflow
 
-**A physics-aware safety gateway for small water utilities.**
-HackPrinceton Fall '26 · Business & Enterprise track · working name, change it if you like.
+**Every command to a water plant, checked against physics before it runs.**
 
-> Everyone on the team (and every AI assistant you use) reads this file first.
-> The section called **The contract** is the only thing all three of us depend on.
-> Change it only after telling the other two.
+Live demo: **[backflow.design](https://backflow.design)** (plays a recording of the real system on a loop)
 
 ---
 
-## 1. The pitch in four sentences
+# Inspiration
 
-In July 2026, CISA saw attackers going after more than 100 internet-exposed US water
-systems, mostly small towns whose pump controllers (PLCs) were reachable from the internet. CISA's advice was to put a gateway between
-the internet and the PLC. Backflow is that gateway: it reads every command headed for the PLC,
-runs it through a physics model of the plant, and refuses anything that would overflow a tank,
-drain the town's pressure, or overdose chlorine. An AI agent then investigates what happened,
-puts the station back in a safe state, messages the one operator on call in plain English
-(today on the dashboard's phone panel; SMS is future work), and drafts the incident report.
+On 30 July 2026 the FBI and EPA put out a warning: attackers were changing settings on internet-facing
+pump controllers at water systems in at least seven US states.
 
-- **Who it helps:** residents on small water systems with no security staff.
-- **Who pays:** the integrators who install and maintain these PLCs (monthly fee per station);
-  cyber insurers and state grant programs second.
-- **Why it is different:** ordinary firewalls ask "is this packet allowed?" Backflow asks
-  "what would this command do to the water?"
+The targets weren't big city utilities with security teams. They were small towns, where one operator
+looks after the whole system and is on call at 3 a.m. The controller that runs the chlorine doser sits on the
+same network the contractor uses for remote access. If someone gets in and sets the doser to 100 %, nothing
+stops it. The controller does what it's told.
 
-## 2. How it works
+Firewalls don't help here because the attack looks completely normal. It's a valid Modbus write, from an
+address that's allowed to write, to a register that's meant to be written. The only way to see it's wrong
+is to ask what the command would *do to the water*.
 
-```
- attacker / remote operator
-          |
-          v   Modbus TCP :1502
- +--------------------+        +---------------------------+
- |  GATEWAY (laptop)  |<------>|  PHYSICS MODEL (python)   |
- |  1 parse command   |        |  predict(state, command)  |
- |  2 policy check    |        |  -> safe? what breaks,    |
- |  3 physics check   |        |     and in how many min   |
- |  4 allow / hold    |        +---------------------------+
- +--------------------+
-      | allowed only          held or odd events
-      v  Modbus TCP :502            |
- +--------------------+             v
- |  STATION (ESP32)   |     +---------------------------+
- |  relay 1 = pump    |     |  AGENT (deepagents)       |
- |  relay 2 = doser   |     |  investigate -> act ->    |
- |  PIR + light =     |     |  ask operator -> report   |
- |  "someone on site" |     +---------------------------+
- |  OLED, buzzer, LEDs|             |
- +--------------------+             v
-      ^                      operator's phone panel (dashboard),
-      |  reads relays,       incident report (markdown)
-      |  writes tank level
- +--------------------+
- |  PLANT TWIN        |  the "real world": same physics model,
- |  (laptop)          |  stepped forward in time, sped up for the demo
- +--------------------+
-```
-
-**Two rules that keep this honest and safe**
-
-1. **The AI is never in the hot path.** Allow/hold is decided by plain code (policy + physics) in
-   milliseconds. The agent only works on what has already been held or flagged.
-2. **The agent cannot send arbitrary commands to the station.** Its only write tools are
-   "revert to last known good", "enter safe mode" and "block a source". Releasing a held
-   command needs the operator's approval.
-
-**What is real and what is simulated (say this to judges; they respect it)**
-
-| Real | Simulated |
-|---|---|
-| Modbus TCP traffic, the gateway, the block | Tank level and chlorine (computed by the twin) |
-| Relays switching a pump/fan, buzzer, OLED | The "town" (a potentiometer sets water demand) |
-| On-site presence sensing (PIR, cabinet light) | The PLC itself (an ESP32 stands in for it) |
-
-## 3. Repo layout and owners
-
-```
-backflow/
-├── README.md              <- this file (shared)
-├── shared/
-│   └── registers.yaml     <- the register map, single source of truth
-├── firmware/              <- EE   · ESP32 station (PlatformIO)
-├── physics/               <- MechE· plant model, limits, tests
-├── twin/                  <- MechE· runs the model as the "real world"
-├── sim/                   <- CompE· software station (fallback if ESP32 dies)
-├── gateway/               <- CompE· proxy, policy, agent, API
-│   ├── proxy.py
-│   ├── policy.py
-│   ├── events.py
-│   ├── agent/
-│   └── api.py
-├── dashboard/             <- CompE (MechE helps with the plant view)
-├── attacks/               <- MechE· demo scripts, run only against our own rig
-├── docs/
-│   ├── research.md        <- sources, market numbers, operator quotes
-│   └── demo.md            <- demo script and judge Q&A
-├── .env.example
-└── .gitignore
-```
-
-One directory per owner means almost no merge conflicts.
-
-## 4. The contract
-
-### 4.1 Network
-
-| Thing | Address | Notes |
-|---|---|---|
-| Station (ESP32) | `STATION_HOST:502` | Modbus TCP, unit id 1 |
-| Software station | `127.0.0.1:5020` | same register map, used when no hardware |
-| Gateway | `0.0.0.0:1502` | what "the internet" talks to |
-| Dashboard/API | `localhost:8000` | |
-
-Campus Wi-Fi (`puvisitor`) uses a sign-in page the ESP32 cannot pass, and may block
-device-to-device traffic. **Run everything on a phone hotspot.**
-
-### 4.2 Register map (full version in `shared/registers.yaml`)
-
-Scaling: level and temperature ×10, chlorine ×100. All values unsigned 16-bit.
-
-**Coils (read/write)**
-
-| Addr | Name | Default | Meaning |
-|---|---|---|---|
-| 0 | PUMP_CMD | 0 | 1 = run the supply pump (relay 1) |
-| 1 | DOSER_CMD | 1 | 1 = run the chlorine doser (relay 2), only while the pump runs |
-| 2 | AUTO_MODE | 1 | 1 = station controls the pump from level setpoints |
-| 3 | SAFE_MODE | 0 | 1 = doser off, pump on local level control with default setpoints, remote writes to holding 0–4 and coils 0–2 ignored |
-| 4 | ALARM | 0 | 1 = buzzer + red LED |
-
-In `AUTO_MODE` and `SAFE_MODE` the station writes the pump/doser state it chose back into
-`PUMP_CMD` / `DOSER_CMD` (that is its memory between the setpoints). What the relays are
-actually doing is in `PUMP_RUNNING` / `DOSER_RUNNING` below. The doser never runs without
-the pump (no flow, no dose), matching the physics model.
-
-**Discrete inputs (read only)**
-
-| Addr | Name | Source |
-|---|---|---|
-| 0 | PRESENCE | PIR motion in the last 60 s |
-| 1 | CABINET_OPEN | photoresistor sees light |
-| 2 | LOCAL_BUTTON | button held (local acknowledge / manual) |
-| 3 | HIGH_LEVEL_SWITCH | IR obstacle module, stands in for a float switch |
-| 4 | PUMP_RUNNING | relay 1 is on (after auto, safe mode and the high-level interlock) |
-| 5 | DOSER_RUNNING | relay 2 is on (`DOSER_CMD` and rate > 0 and pump running and not safe mode) |
-
-**Input registers (read only)**
-
-| Addr | Name | Scale | Source |
-|---|---|---|---|
-| 0 | DEMAND_PCT | ×10 | potentiometer, 0–100 % of max town demand |
-| 1 | CABINET_TEMP_C | ×10 | DHT11 |
-| 2 | CABINET_HUMIDITY | ×10 | DHT11 |
-| 10 | LOGIC_HASH | – | CRC16/MODBUS (init 0xFFFF) of holding 0–4 as 10 bytes, each register big-endian |
-| 11 | UPTIME_S | – | seconds since boot (wraps) |
-
-**Holding registers (read/write)**
-
-| Addr | Name | Scale | Default | Meaning |
-|---|---|---|---|---|
-| 0 | DOSER_RATE_PCT | ×1 | 10 | doser output, 0–100 % |
-| 1 | LEVEL_HIGH_SP | ×10 | 850 | pump stops above this level |
-| 2 | LEVEL_LOW_SP | ×10 | 400 | pump starts below this level |
-| 3 | CHLORINE_TARGET | ×100 | 100 | 1.00 mg/L |
-| 4 | LOGIC_VERSION | – | 1 | bumped when control settings change |
-| 100 | TANK_LEVEL_PCT | ×10 | 600 | **written by the twin only** |
-| 101 | CHLORINE_MGL | ×100 | 100 | **written by the twin only** |
-
-The twin talks to the station directly (it is "physics", not a network user).
-Everything else goes through the gateway.
-
-### 4.3 Physics API (`physics/`)
-
-```python
-from physics import PlantState, Command, predict, step
-
-state = PlantState(level_pct=60.0, chlorine_mgl=1.0, demand_pct=40.0,
-                   pump_on=True, doser_on=True, doser_rate_pct=10,
-                   level_high_sp=85.0, level_low_sp=40.0, auto_mode=True)
-
-cmd = Command(kind="register", address=0, value=100)   # doser to max
-
-p = predict(state, cmd, horizon_min=120)
-p.safe            # False
-p.violations      # [Violation(code="CHLORINE_HIGH", minutes_until=<N>,
-                  #            value=4.0, limit=4.0, pre_existing=False,
-                  #            message="Chlorine exceeds 4.0 mg/L in about N plant-minutes")]
-p.trajectory      # [(t_min, level_pct, chlorine_mgl), ...] for the dashboard plot
-
-next_state = step(state, dt_s=1.0)   # used by the twin
-```
-
-`minutes_until` comes from the parameters in `physics/model.py`; do not quote a number from
-this example. The twin builds its state from `PUMP_RUNNING` / `DOSER_RUNNING` with
-`auto_mode=False`, so the station (not the model) decides the pump.
-
-Violation codes: `TANK_OVERFLOW`, `PRESSURE_LOSS` (tank too low), `CHLORINE_HIGH`,
-`CHLORINE_LOW`, `PUMP_SHORT_CYCLE`, `SETPOINT_OUT_OF_RANGE`.
-`predict` must be pure, fast (<20 ms) and must never raise on odd input.
-
-### 4.4 Event schema (gateway -> agent, dashboard, database)
-
-```json
-{
-  "id": "evt_0042",
-  "ts": "2026-11-14T03:12:09Z",
-  "src_ip": "203.0.113.7",
-  "function": 6,
-  "kind": "register",
-  "address": 0,
-  "name": "DOSER_RATE_PCT",
-  "old_value": 10,
-  "new_value": 100,
-  "decision": "HOLD",
-  "reasons": ["CHLORINE_HIGH in 11 min", "source not seen before", "nobody on site"],
-  "prediction": { "safe": false, "violations": [], "trajectory": [] },
-  "station": { "presence": false, "cabinet_open": false, "level_pct": 61.2, "chlorine_mgl": 1.02 }
-}
-```
-
-`decision` is one of `ALLOW`, `HOLD`, `DENY`. Held commands are **not** forwarded;
-the gateway answers the sender with a Modbus exception.
-
-## 5. Demo scenarios (`attacks/`)
-
-Run these only against our own ESP32 or the software station.
-
-| # | Name | What the script sends | What should happen |
-|---|---|---|---|
-| 0 | Normal day | operator turns pump on, small setpoint change | allowed, relay clicks |
-| 1 | Chlorine overdose | DOSER_RATE_PCT -> 100, DOSER_CMD -> 1 (run after #0: with the pump off no chlorine reaches the tank) | held, "chlorine > 4 mg/L in N min" |
-| 2 | Drain the town | AUTO_MODE -> 0, PUMP_CMD -> 0 at high demand | held, "pressure loss in N min" |
-| 3 | Overflow | LEVEL_HIGH_SP -> 1000, PUMP_CMD -> 1 | held, "tank overflows in N min" |
-| 4 | Logic tamper | setpoints changed behind the gateway's back | LOGIC_HASH mismatch, agent reverts |
-| 5 | Operator on site | same change as #1 but smaller, with PRESENCE + CABINET_OPEN | agent asks operator, approval releases it |
-
-Scenario 1 is the one we show in the two-minute demo. The rest are for judge questions.
-
-## 6. Working together
-
-- **Repo:** create it after 8pm Friday (rules: repo created Nov 13–15, public, all work done in
-  the hacking period). No code copied from older projects.
-- **Branches:** `main` always runs. Work on `ee/...`, `me/...`, `ce/...`; merge small and often.
-- **Commits:** small and frequent, plain messages.
-- **Secrets:** API keys live in `.env` (git-ignored). `.env.example` lists the names only.
-- **Check-ins:** five minutes at each milestone below. Ask: does the end-to-end path still work?
-- **ChatOverflow:** whoever uses a coding agent connects it once (free prize entry).
-
-## 7. Milestones
-
-| When | Milestone | Proof |
-|---|---|---|
-| Fri 11pm | Skeleton | repo up, software station answers Modbus, `predict()` returns something |
-| Sat 3am | Parts work alone | relay toggles over Wi-Fi; physics tests pass; proxy forwards and logs |
-| Sat noon | First block | scenario 1 is held by the gateway against the software station |
-| Sat 4pm | On hardware | scenario 1 held against the ESP32; relay stays off; twin drives the OLED level |
-| **Sat 8pm** | **Hour-24 demo** | attack -> hold -> agent explains -> operator text -> reply -> report |
-| Sun 2am | Polish | dashboard, scenarios 2–5, logic-hash check (advisory lookup: not built) |
-| Sun 5am | Freeze | no new features; record 2-min video; write Devpost |
-| Sun 7:30am | Submit | deadline is 8:00am; do not cut it close |
-
-**If hardware fails:** switch `STATION_HOST` to the software station. Nothing else changes.
-
-## 8. Prizes we are entering
-
-- Main track: **Business & Enterprise** (it names cybersecurity).
-- Special: Amazon Practical AI · Best Physical AI · LangChain deepagents · Best Hardware Hack ·
-  ChatOverflow · Photon (only if operator texting runs on Photon) · Arlequin forensics (only if
-  the report has an evidence-cited timeline) · Peri (only if we talk to a real operator or
-  integrator and keep proof).
-- MLH (offered at this event): Tiger Data (time-series log) · Vultr (hosting) · GoDaddy domain ·
-  Gemini (only if it is our model anyway).
-
-Add an integration only if it makes the product better.
-
-## 9. Two-minute demo
-
-1. **0:00–0:20** "In July, attackers went after over 100 internet-exposed US water systems,
-   mostly small towns with one operator and no security team. This is a pump station."
-2. **0:20–0:45** Normal command: relay clicks, pump runs, dashboard shows ALLOW.
-3. **0:45–1:15** Attack: doser to max. No click. Dashboard shows the predicted chlorine curve
-   crossing 4 mg/L and the reasons. Say "4 mg/L is EPA's maximum residual level for
-   chlorine; we use it as our alarm line" (EPA compliance is a running annual average, so
-   never say the attack "breaks the EPA limit").
-4. **1:15–1:40** The operator's phone panel on the dashboard shows a plain-English message. Reply "block". The incident
-   report appears with a timeline.
-5. **1:40–2:00** "One box per station, sold through the integrators who install the PLCs.
-   81% of US water systems are small. We start with one."
-
-## 10. Open decisions
-
-- [ ] Final name and domain
-- [ ] Which model the agent runs on
-- [x] Operator channel: dashboard phone panel (SMS not built)
-- [ ] Pump or fan on relay 1 (if we can buy one Saturday)
-- [ ] Who presents
+So we built a box that asks exactly that.
 
 ---
 
-## Run it
+# What It Does
 
-Windows (PowerShell):
+Backflow is a safety gateway that sits between remote access and the pump controller. Every command goes
+through it, and every command gets run forward through a physics model of the plant before it's allowed
+to reach the controller.
+
+```
+COMMAND ➔ PARSE ➔ POLICY + PHYSICS ➔ ALLOW or HOLD ➔ AGENT INVESTIGATES ➔ OPERATOR DECIDES ➔ REPORT
+```
+
+* **Predicts what a command does:** A model of the tank and the chlorine dosing simulates the next few
+  hours. If the command would overdose chlorine, overflow the tank or drain the town's pressure, the gateway
+  knows what would break and when (*"Chlorine reaches 4 mg/L in 139 min"*).
+* **Holds what's unsafe, in milliseconds:** Safe commands pass straight through. Unsafe ones never reach the
+  controller; the sender gets a Modbus exception and the station's alarm goes off.
+* **No AI in the decision:** Allow or hold is plain code. It fails closed, so an error or timeout means hold.
+* **An agent does the follow-up:** Once a command is held, an AI agent reads the traffic and the station's
+  live state, reruns the physics, and sends the operator one plain-language briefing with a recommendation.
+* **The operator stays in charge:** The agent can't write to the plant. It can only block a source, revert to
+  the last known good settings, or put the station in safe mode. Releasing a held command always takes the
+  operator's approval, plus a one-time code, and the command gets re-checked against physics on the way out.
+* **Writes the incident report:** A timeline with evidence, ready to forward.
+* **Catches tampering behind its back:** If the controller's settings change without an allowed write, the
+  logic hash stops matching and the agent restores the last known good settings.
+
+---
+
+# How We Built It
+
+### Tech Stack
+* **Station:** ESP32 (PlatformIO, C++), Modbus TCP server, two relays (pump and chlorine doser), PIR and
+  light sensor for "someone on site", potentiometer for town demand, OLED, buzzer and alarm LEDs
+* **Physics:** Python model of a well-mixed tank with pump flow, demand and chlorine dosing. `predict()`
+  returns what breaks and when; `step()` drives a digital twin that plays the real world for the demo.
+* **Gateway:** Python, pymodbus, FastAPI, SQLite. Modbus proxy, policy and physics checks, held-command
+  store, event log, live stream to the dashboard
+* **Agent:** LangChain deepagents on Claude Haiku, with read-only investigation tools, three narrow action
+  tools, reporter and forensics subagents, and a spending cap
+* **Dashboard:** Plain HTML, CSS and JavaScript, no build step and no CDN, so it runs offline on a hotspot
+
+### Architecture
+```
+ remote access ──► GATEWAY ──(allowed only)──► ESP32 STATION ◄── PLANT TWIN
+                   policy + physics                (relays, sensors)    (tank level, chlorine)
+                       │
+                  held commands
+                       ▼
+                    AGENT ──► operator briefing ──► Approve / Reject ──► incident report
+```
+
+What's real and what's simulated: the Modbus traffic, the gateway, the block, the relays, the sensors and
+the alarm are real. The tank level and chlorine are computed by the twin, and the ESP32 stands in for an
+industrial controller.
+
+---
+
+# Running It Locally
+
 ```
 python -m venv .venv
-.venv\Scripts\Activate.ps1
+.venv\Scripts\Activate.ps1          # Mac/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+python tasks.py demo --sim          # software station, twin and gateway; drop --sim to use the ESP32
 ```
 
-Mac:
+Open http://localhost:8000 and sign in as `operator`. In a second terminal, run an attack:
+
 ```
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python -m attacks.normal_day           # allowed
+python -m attacks.chlorine_overdose    # held, with the physics reason
 ```
 
-Then `python tasks.py --help` (`sim`, `gateway`, `test`, `demo`).
-
-Software station tips:
-- `python tasks.py sim --host 0.0.0.0` lets other laptops on the hotspot reach it (default is localhost only). It boots with 40 % demand (`--demand 60` to change).
-- Sensors the sim has no hardware for: `python -m sim.poke set PRESENCE 1`, `set CABINET_OPEN 1`, `set DEMAND_PCT 800` (raw values, same scaling as the register map; run on the sim's laptop).
-- Code that polls the station (twin, gateway) should hold one connection: `from sim.poke import Link` (example in `sim/poke.py`).
+There are six scenarios in [`attacks/`](attacks/): normal day, chlorine overdose, drain the town, overflow,
+logic tamper and operator on site. Only run them against your own station or the software station. The
+register map is in [`shared/registers.yaml`](shared/registers.yaml), the site is documented in
+[`dashboard/README.md`](dashboard/README.md), and the firmware in [`firmware/README.md`](firmware/README.md).
+`python tasks.py test` runs the test suite.
