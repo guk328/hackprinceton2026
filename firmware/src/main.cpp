@@ -27,10 +27,11 @@ const uint32_t PIR_WARMUP_MS = 60000;  // PIR is unreliable after power-on: igno
 const uint32_t PIR_LATCH_MS = 60000;   // PRESENCE stays 1 this long after the last motion
 const uint32_t DEBOUNCE_MS = 30;
 const uint32_t DHT_PERIOD_MS = 2500;   // DHT11 limit is 1 read / 2 s
-// Photoresistor module: "light" metric rises with light. If your module's AO falls with light,
-// set LDR_LIGHT_IS_HIGH = false. Thresholds are raw 12-bit ADC counts (0-4095); the serial log
-// prints the raw value so they can be calibrated. Hysteresis = the gap between the two.
-const bool LDR_LIGHT_IS_HIGH = true;
+// Photoresistor module: ours is the 3-pin LM393 type (DO GND VCC, no AO). DO is LOW in light, HIGH
+// in the dark; the light threshold and its hysteresis are set by the module's blue trimmer. The
+// firmware still reads it on ADC1 (D35) with smoothing and its own hysteresis, so a 4-pin module's
+// AO would work too (set LDR_LIGHT_IS_HIGH to match). Thresholds are on a 0-4095 "light" metric.
+const bool LDR_LIGHT_IS_HIGH = false;
 const int LDR_OPEN_ABOVE = 2400;       // light metric above this -> CABINET_OPEN = 1
 const int LDR_CLOSED_BELOW = 1800;     // light metric below this -> CABINET_OPEN = 0
 // Pot ADC range (the ESP32 ADC is not linear near the ends; trim so both ends reach 0 and 100 %)
@@ -157,29 +158,36 @@ bool cabinetOpen = false, dhtBusy = false;
 uint8_t dhtFails = 0;
 
 // DHT11 single-wire read. Timing-critical part (about 4 ms) runs with interrupts off on this core.
-static uint32_t pulseUs(int level, uint32_t timeoutUs) {
+// Duration (us) the pin stays at `level`; -1 on timeout. 0 is valid (pin was already at the other level).
+static int32_t pulseUs(int level, uint32_t timeoutUs) {
   uint32_t t0 = micros();
   while (digitalRead(PIN_DHT) == level)
-    if (micros() - t0 > timeoutUs) return 0;
+    if (micros() - t0 > timeoutUs) return -1;
   return micros() - t0;
 }
 
+int dhtStage = 0;  // where the last capture failed (0 = ok), for the serial log
 bool dhtCapture(uint8_t d[5]) {
   static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
-  uint32_t lo[40], hi[40];
+  int32_t lo[40], hi[40];
   bool ok = true;
   pinMode(PIN_DHT, INPUT_PULLUP);  // start pulse was already sent, release the line
   portENTER_CRITICAL(&mux);
-  if (!pulseUs(HIGH, 100)) ok = false;  // line rises after release
-  if (ok && !pulseUs(LOW, 120)) ok = false;   // sensor ack low
-  if (ok && !pulseUs(HIGH, 120)) ok = false;  // sensor ack high
+  dhtStage = 1;
+  pulseUs(LOW, 200);                    // let the line rise after release (may take a few us)
+  if (pulseUs(HIGH, 100) < 0) ok = false;  // then the sensor pulls it low to answer
+  if (ok) dhtStage = 2;
+  if (ok && pulseUs(LOW, 120) < 0) ok = false;   // sensor ack low
+  if (ok) dhtStage = 3;
+  if (ok && pulseUs(HIGH, 120) < 0) ok = false;  // sensor ack high
   for (int i = 0; ok && i < 40; i++) {
     lo[i] = pulseUs(LOW, 100);
     hi[i] = pulseUs(HIGH, 120);
-    if (!lo[i] || !hi[i]) ok = false;
+    if (lo[i] < 0 || hi[i] < 0) { ok = false; dhtStage = 10 + i; }
   }
   portEXIT_CRITICAL(&mux);
   if (!ok) return false;
+  dhtStage = 0;
   for (int i = 0; i < 5; i++) d[i] = 0;
   for (int i = 0; i < 40; i++) d[i / 8] = (d[i / 8] << 1) | (hi[i] > lo[i] ? 1 : 0);
   return d[4] == (uint8_t)(d[0] + d[1] + d[2] + d[3]);
@@ -258,7 +266,7 @@ void inputsUpdate() {
       mb.Ireg(IR_CABINET_HUMIDITY, h);
       Serial.printf("DHT11 %d.%d C  %d.%d %%RH\n", t / 10, t % 10, h / 10, h % 10);
     } else if (dhtFails < 255 && ++dhtFails <= 3) {
-      Serial.println("DHT11 read failed (check wiring on D4); keeping last value");
+      Serial.printf("DHT11 read failed at stage %d (1-3 = no answer: check D4/VCC/GND; 10+ = bit error), idle level %d\n", dhtStage, digitalRead(PIN_DHT));
     }
   }
 }
@@ -306,7 +314,7 @@ void setup() {
   relaysOffAtBoot();  // first thing, before serial, OLED or Wi-Fi
   Serial.begin(115200);
   pinMode(PIN_LED, OUTPUT);
-  Serial.println("\nBackflow station, step 1");
+  Serial.println("\nBackflow station, step 4");
 
   Wire.begin(PIN_SDA, PIN_SCL);
   uint8_t addr = scanOled();

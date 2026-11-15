@@ -11,7 +11,7 @@ Started by the CompE on Saturday morning to unblock gateway step 13. EE takes ov
 | 1. Blink + serial + Wi-Fi + IP on OLED | done | yes: serial, Wi-Fi, ping. OLED picture not confirmed by eye yet |
 | 2. Modbus server, full register map | done | yes (see below) |
 | 3. Relays follow coils 0 and 1 | done | yes (see below) |
-| 4. Inputs (pot, button, PIR, LDR, DHT11, IR) | done (compiles, not flashed yet) | no: waiting for the parts to be wired |
+| 4. Inputs (pot, button, PIR, LDR, DHT11, IR) | done | yes for pot, button, PIR, photoresistor, IR; **DHT11 never answered; being taken off the rig** (registers 1-2 read 0) |
 | 5. Control logic, safe mode, interlock, logic hash | not started | |
 | 6. OLED screen, LEDs, buzzer | not started | |
 | 7. Rig | not started | |
@@ -138,11 +138,21 @@ Step 3 on the real board:
 - Latency: write acknowledged in 9-35 ms; coil write to `PUMP_RUNNING` following: 19-30 ms over 10 toggles (limit 300 ms).
 - Not yet tested: relays with the pump/fan connected, AUTO_MODE/SAFE_MODE behaviour (step 5), 30-minute run.
 
+Step 4 on the real board (all watched over Modbus with `sim.poke`'s `read_all`, about 3 reads/s, plus the serial log):
+- Pot: `DEMAND_PCT` sweeps 0.7 % to 98.5 % and back, both directions, smooth, no jitter at rest (0.3 % dead band); 1000 at the stop.
+- Button: `LOCAL_BUTTON` 1 while held (12.7 s hold seen), 0 on release; serial `button DOWN/UP`.
+- IR module: `HIGH_LEVEL_SWITCH` 1 with a hand 3-5 cm away, 0 when removed. Needed its trimmer turned down first (it saw the table and read "obstacle" permanently).
+- PIR: ignored for 60 s after boot, then motion sets `PRESENCE` = 1; the 60 s latch expiry back to 0 is seen on serial.
+- Photoresistor: our module is the **3-pin LM393 type (`DO GND VCC`, no `AO`)**, so D35 reads a comparator output: about 0 in light, 4095 in the dark. The threshold is the module's blue trimmer; firmware adds smoothing plus a 1800/2400 hysteresis band (`LDR_LIGHT_IS_HIGH = false`). Cover -> `CABINET_OPEN` 0, uncover -> 1, one clean change each way.
+- DHT11: **fails**. The sensor never answers the start pulse ("stage 1" in the serial log, line idles high). Firmware reader fixed for a release-timing race; still no answer, so wiring is suspected. `CABINET_TEMP_C` / `CABINET_HUMIDITY` stay 0.
+- Serial tip: `python -m platformio device monitor` (and pyserial with default settings) toggles DTR/RTS and resets the board; open the port with DTR and RTS held low to read the log without a reboot.
+- LED resistors on this build are 120 ohm (brown-red-black-black-brown), about 11-12 mA per LED: fine for an ESP32 pin.
+
 ## Acceptance tests
 
 - [x] `python -m sim.poke --host <ESP32 IP> --port 502 read all` reads every register with the documented defaults after boot.
 - [ ] Writing coil 0 with `AUTO_MODE = 0` clicks relay 1 within 300 ms. (Step 3 click and latency verified with AUTO_MODE untouched; there is no auto logic yet. Re-run after step 5.)
-- [ ] Covering/uncovering the photoresistor flips `CABINET_OPEN` without chatter.
+- [x] Covering/uncovering the photoresistor flips `CABINET_OPEN` without chatter. (Step 4: one transition each way over Modbus; threshold set by the module's trimmer.)
 - [x] Changing any of holding registers 0–4 changes `LOGIC_HASH` (tested holding 0).
 - [ ] With `SAFE_MODE = 1`, a write to `DOSER_RATE_PCT` has no effect.
 - [x] `PUMP_RUNNING` / `DOSER_RUNNING` match the relays; with the pump off, relay 2 stays off. (Step 3 rule only; the rate > 0 and SAFE_MODE conditions arrive in step 5.)
