@@ -89,6 +89,7 @@
     setModeText("Loading the recording…");
     $("mode-switch").textContent = "Switch to live";
     $("mode-switch").href = "console.html";
+    if (window.Backflow.hosted) $("mode-switch").hidden = true;   // the public site has no gateway to switch to
     $("player").hidden = false;
     $("pl-toggle").addEventListener("click", () => source.toggle());
     $("pl-restart").addEventListener("click", () => source.restart());
@@ -97,8 +98,13 @@
   on("player", (p) => {
     if (p.missing) { setModeText("No recording found. Record one with dashboard/tools/record_replay.py."); return; }
     const when = new Date(p.meta.t0 * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
-    setModeText(p.waiting ? `Paused. Press ${p.waiting.reply === "BLOCK" ? "Reject" : "Approve"}, as the recorded operator did.`
+    const verb = p.waiting && (p.waiting.reply === "BLOCK" ? "Reject" : "Approve");
+    setModeText(p.waiting ? (p.autoIn != null ? `Press ${verb} (the recorded choice), or wait ${p.autoIn} s.`
+        : `Paused. Press ${verb}, as the recorded operator did.`)
+      : p.restartIn != null ? `End of the recording. Playing again in ${p.restartIn} s.`
       : `Recorded ${when} on ${p.meta.station}. Nothing here reaches a station.`);
+    document.body.classList.toggle("await-BLOCK", !!p.waiting && p.waiting.reply === "BLOCK");
+    document.body.classList.toggle("await-ALLOW", !!p.waiting && p.waiting.reply === "ALLOW");
     $("pl-toggle").textContent = p.done ? "Play again" : p.playing ? "Pause" : "Play";
     $("pl-bar").value = p.total ? Math.min(1, p.t / p.total) : 0;
     document.querySelectorAll(".pl-speed").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.x === p.speed)));

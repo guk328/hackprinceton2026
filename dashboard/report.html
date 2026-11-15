@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Incident report · Backflow</title>
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="app.css?v=9">
 <link rel="icon" href="data:,">
 </head>
 <body class="reportpage">
@@ -39,7 +39,7 @@
 // every piece of text goes in with textContent, so nothing in a report can run as HTML.
 "use strict";
 (async () => {
-  const q = new URLSearchParams(location.search), id = q.get("id") || "", replay = q.get("mode") === "replay" || location.protocol === "file:";
+  const q = new URLSearchParams(location.search), id = q.get("id") || "", replay = q.get("mode") === "replay" || location.protocol === "file:" || /(^|\.)backflow\.design$|\.github\.io$/.test(location.hostname);
   const $ = (i) => document.getElementById(i), box = $("report");
   const el = (tag, text) => { const n = document.createElement(tag); if (text !== undefined) inline(n, text); return n; };
   function inline(node, text) {               // **bold** and `code`

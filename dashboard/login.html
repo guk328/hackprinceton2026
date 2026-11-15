@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Backflow</title>
-<link rel="stylesheet" href="app.css?v=8">
+<link rel="stylesheet" href="app.css?v=9">
 <link rel="icon" href="data:,">
 </head>
 <body class="signin">
@@ -19,7 +19,7 @@
   </div>
   <div class="glass mini" aria-hidden="true">
     <div class="row"><span class="badge HOLD"><svg viewBox="0 0 16 16"><path d="M5 2.5v11M11 2.5v11" fill="none" stroke="currentColor" stroke-width="3.2"/></svg>HOLD</span> Doser rate 10 % → 100 %</div>
-    <div class="why">Chlorine reaches 4 mg/L in 88 min</div>
+    <div class="why">Chlorine reaches 4 mg/L in 139 min</div>
     <div class="foot">Held by the gateway. It never reached the station.</div>
   </div>
 </aside>
@@ -40,6 +40,12 @@
 "use strict";
 (async () => {
   const err = document.getElementById("err"), pw = document.getElementById("pw"), user = document.getElementById("user");
+  if (/(^|\.)backflow\.design$|\.github\.io$/.test(location.hostname)) {
+    // The public site has no gateway behind it. The live console runs on the station's own gateway.
+    err.textContent = "This is the public demo. The live console runs on the gateway next to the station; the recorded incident below is the real system.";
+    document.querySelector("#form button").disabled = true;
+    return;
+  }
   try {
     const me = await (await fetch("/me", { credentials: "same-origin" })).json();
     if (me.admin === true) location.replace("console.html");

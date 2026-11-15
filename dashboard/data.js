@@ -82,9 +82,16 @@
   }
 
   // ------------------------------------------------------------------ replay
-  function replaySource() {
-    let rec = null, idx = 0, t = 0, speed = 1, playing = false, waiting = null, last = 0;
+  // On the public site, or with ?loop=1, the replay runs unattended: at the operator's question it waits
+  // AUTO_REPLY_MS for someone to press the recorded answer, then continues by itself, and it starts over
+  // RESTART_MS after the end. Locally, ?mode=replay waits for the presenter as before.
+  const AUTO_REPLY_MS = 8000, RESTART_MS = 10000;
+  function replaySource(auto) {
+    let rec = null, idx = 0, t = 0, speed = 1, playing = false, waiting = null, last = 0, restartAt = 0;
+    const secs = (at) => Math.max(0, Math.ceil((at - performance.now()) / 1000));
     const status = () => ({ t, total: rec ? rec.meta.duration_s : 0, speed, playing, waiting,
+                            autoIn: waiting && waiting.autoAt ? secs(waiting.autoAt) : null,
+                            restartIn: restartAt ? secs(restartAt) : null,
                             done: !!rec && idx >= rec.timeline.length, meta: rec && rec.meta });
     const recordedReply = (eventId) => {
       for (const item of rec.timeline) {
@@ -106,7 +113,19 @@
     function tick() {
       const now = performance.now(), dt = (now - last) / 1000;
       last = now;
-      if (!rec || !playing || waiting) return;
+      if (!rec) return;
+      if (auto && waiting && playing) {
+        if (!waiting.autoAt) waiting.autoAt = now + AUTO_REPLY_MS;
+        if (now >= waiting.autoAt) waiting = null;          // nobody pressed it: carry on as the recorded operator did
+        emit("player", status());
+        if (waiting) return;
+      }
+      if (auto && !playing && idx >= rec.timeline.length) {
+        if (!restartAt) restartAt = now + RESTART_MS;
+        if (now >= restartAt) src.restart(); else emit("player", status());
+        return;
+      }
+      if (!playing || waiting) return;
       t += dt * speed;
       while (idx < rec.timeline.length && rec.timeline[idx].t <= t && !waiting) dispatch(rec.timeline[idx++]);
       if (waiting) t = rec.timeline[idx - 1].t;
@@ -129,7 +148,7 @@
         s.onerror = () => emit("player", { missing: true });
         document.head.append(s);
       },
-      restart() { idx = 0; t = 0; waiting = null; playing = true; last = performance.now(); emit("reset"); emit("player", status()); },
+      restart() { idx = 0; t = 0; waiting = null; restartAt = 0; playing = true; last = performance.now(); emit("reset"); emit("player", status()); },
       toggle() { if (idx >= rec.timeline.length) return src.restart(); playing = !playing; emit("player", status()); },
       setSpeed(x) { speed = x; emit("player", status()); },
       getEvent: async (id) => { if (rec.events[id]) return rec.events[id]; throw new Error("not in the recording"); },
@@ -148,7 +167,10 @@
     return src;
   }
 
-  const mode = new URLSearchParams(location.search).get("mode") === "replay" || location.protocol === "file:" ? "replay" : "live";
-  const source = mode === "replay" ? replaySource() : liveSource();
-  window.Backflow = { on, source, getJSON, replaySource };
+  // The public site (backflow.design on GitHub Pages) has no gateway behind it: it always plays the recording.
+  const hosted = /(^|\.)backflow\.design$|\.github\.io$/.test(location.hostname);
+  const params = new URLSearchParams(location.search);
+  const mode = hosted || params.get("mode") === "replay" || location.protocol === "file:" ? "replay" : "live";
+  const source = mode === "replay" ? replaySource(hosted || params.get("loop") === "1") : liveSource();
+  window.Backflow = { on, source, getJSON, replaySource, hosted };
 })();
