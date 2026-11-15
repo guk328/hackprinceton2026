@@ -16,8 +16,8 @@ systems, mostly small towns whose pump controllers (PLCs) were reachable from th
 the internet and the PLC. Backflow is that gateway: it reads every command headed for the PLC,
 runs it through a physics model of the plant, and refuses anything that would overflow a tank,
 drain the town's pressure, or overdose chlorine. An AI agent then investigates what happened,
-puts the station back in a safe state, texts the one operator on call in plain English, and
-drafts the incident report.
+puts the station back in a safe state, messages the one operator on call in plain English
+(today on the dashboard's phone panel; SMS is future work), and drafts the incident report.
 
 - **Who it helps:** residents on small water systems with no security staff.
 - **Who pays:** the integrators who install and maintain these PLCs (monthly fee per station);
@@ -44,11 +44,11 @@ drafts the incident report.
  |  STATION (ESP32)   |     +---------------------------+
  |  relay 1 = pump    |     |  AGENT (deepagents)       |
  |  relay 2 = doser   |     |  investigate -> act ->    |
- |  PIR + light =     |     |  text operator -> report  |
+ |  PIR + light =     |     |  ask operator -> report   |
  |  "someone on site" |     +---------------------------+
  |  OLED, buzzer, LEDs|             |
  +--------------------+             v
-      ^                      operator's phone, dashboard,
+      ^                      operator's phone panel (dashboard),
       |  reads relays,       incident report (markdown)
       |  writes tank level
  +--------------------+
@@ -262,7 +262,7 @@ Scenario 1 is the one we show in the two-minute demo. The rest are for judge que
 | Sat noon | First block | scenario 1 is held by the gateway against the software station |
 | Sat 4pm | On hardware | scenario 1 held against the ESP32; relay stays off; twin drives the OLED level |
 | **Sat 8pm** | **Hour-24 demo** | attack -> hold -> agent explains -> operator text -> reply -> report |
-| Sun 2am | Polish | dashboard, scenarios 2–5, logic-hash check, advisory lookup |
+| Sun 2am | Polish | dashboard, scenarios 2–5, logic-hash check (advisory lookup: not built) |
 | Sun 5am | Freeze | no new features; record 2-min video; write Devpost |
 | Sun 7:30am | Submit | deadline is 8:00am; do not cut it close |
 
@@ -289,7 +289,7 @@ Add an integration only if it makes the product better.
    crossing 4 mg/L and the reasons. Say "4 mg/L is EPA's maximum residual level for
    chlorine; we use it as our alarm line" (EPA compliance is a running annual average, so
    never say the attack "breaks the EPA limit").
-4. **1:15–1:40** Operator's phone buzzes with a plain-English text. Reply "block". The incident
+4. **1:15–1:40** The operator's phone panel on the dashboard shows a plain-English message. Reply "block". The incident
    report appears with a timeline.
 5. **1:40–2:00** "One box per station, sold through the integrators who install the PLCs.
    81% of US water systems are small. We start with one."
@@ -298,7 +298,7 @@ Add an integration only if it makes the product better.
 
 - [ ] Final name and domain
 - [ ] Which model the agent runs on
-- [ ] Operator channel: Photon, or a simpler fallback
+- [x] Operator channel: dashboard phone panel (SMS not built)
 - [ ] Pump or fan on relay 1 (if we can buy one Saturday)
 - [ ] Who presents
 
