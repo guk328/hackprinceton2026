@@ -1,7 +1,8 @@
 # The Backflow site
 
-Static files served by the gateway's FastAPI app (`gateway/api.py` mounts this folder at `/`).
-No build step, no CDN, system fonts. It works on the hotspot with no internet.
+Static files served by the gateway's FastAPI app (`gateway/api.py` mounts this folder at `/`),
+and published as-is to https://backflow.design (below). No build step, no CDN, system fonts. It
+works on the hotspot with no internet.
 
 ## Run
 
@@ -24,6 +25,47 @@ python -m attacks.chlorine_overdose    # scenario 1: held with a physics reason
 Approve or Reject on the centre card once the agent's briefing arrives (10 to 20 s).
 After a Reject the source address is blocked for 60 minutes: press **Reset demo** before the
 next run.
+
+## Public demo: https://backflow.design
+
+`.github/workflows/pages.yml` publishes this folder to GitHub Pages on every push to `main` that
+touches `dashboard/`. There is no gateway behind the public site, so on `backflow.design` or
+`*.github.io` the pages switch themselves to the recording (`Backflow.hosted` in `data.js`):
+
+- the console plays `replay/scenario_0_1.js` and loops: at the operator's question it pulses the
+  button the recorded operator pressed and continues after 8 s if nobody clicks; 10 s after the
+  end it starts over
+- the landing page's sign-in button becomes "Watch the demo"; the sign-in page says it is the
+  public demo; report links read from the recording
+
+Try the same loop locally with `console.html?mode=replay&loop=1`.
+
+One-time setup (repo admin and whoever holds the domain):
+
+1. The repo must be public (GitHub Pages on a free account).
+2. Repo Settings → Pages → Build and deployment → Source: **GitHub Actions**. Then run the
+   "Publish site" workflow once (Actions tab → Run workflow), or push.
+3. Same page → Custom domain: `backflow.design` → Save.
+4. At the registrar, DNS for `backflow.design` (delete any parking or forwarding records first):
+
+   | Type | Host | Value |
+   |---|---|---|
+   | A | @ | 185.199.108.153 |
+   | A | @ | 185.199.109.153 |
+   | A | @ | 185.199.110.153 |
+   | A | @ | 185.199.111.153 |
+   | AAAA | @ | 2606:50c0:8000::153 |
+   | AAAA | @ | 2606:50c0:8001::153 |
+   | AAAA | @ | 2606:50c0:8002::153 |
+   | AAAA | @ | 2606:50c0:8003::153 |
+   | CNAME | www | guk328.github.io |
+
+5. Once the DNS check in Settings → Pages goes green (minutes to an hour), tick **Enforce HTTPS**.
+6. Recommended: verify the domain under your GitHub profile → Settings → Pages, so nobody else
+   can point a repo at it.
+
+To refresh the recording, run the full demo and `python dashboard/tools/record_replay.py`, then
+push.
 
 ## Pages
 
