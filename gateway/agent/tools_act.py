@@ -84,8 +84,9 @@ def release(event_id: str, *, held, channel, writer, refresh, store=None, poller
     """The only path that forwards a held frame. Plain code, in this order, all required:
     1. the frame is still held, 2. a verified operator ALLOW exists for this event, given
     less than APPROVAL_TTL_S ago (used up here), 3. every write in it passes
-    policy.decide(release=True) against fresh station state: envelope, SAFE_MODE rule and
-    physics, without the context and approval rules the operator has just overridden.
+    policy.decide(release=True) against fresh station state: register known, envelope and
+    physics, without the approval rules the operator has just overridden (large step,
+    unknown source, clearing SAFE_MODE).
     Steps 3 and the forward run under the proxy's write lock (`lock`), so no other write can
     land between the re-check and the forward. Any failure or error leaves the frame
     unforwarded."""

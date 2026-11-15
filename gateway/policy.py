@@ -22,7 +22,10 @@ from gateway.station import StationSnapshot
 ALLOW, HOLD, DENY = "ALLOW", "HOLD", "DENY"
 _RANK = {ALLOW: 0, HOLD: 1, DENY: 2}
 _REG_KIND = {"coil": "coil", "register": "holding_register"}
-ALWAYS_SETTABLE = ("SAFE_MODE", "ALARM")  # setting these to 1 only makes the plant safer
+# Setting these to 1 is never refused: they are the emergency stop. It is not free of harm:
+# SAFE_MODE turns the doser off (the model shows low chlorine in about 14 plant-hours), so
+# switching it on is allowed but reported (SAFE_MODE_SET), never silent.
+ALWAYS_SETTABLE = ("SAFE_MODE", "ALARM")
 
 SAFE_MODE_SET = "SAFE_MODE_SET"   # first word of the reason on that ALLOW event; the runner opens an incident
 SHUT_OFF = ("ALARM", "DOSER_CMD", "DOSER_RATE_PCT")   # writing 0 silences the alarm or stops chlorination
