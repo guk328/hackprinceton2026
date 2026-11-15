@@ -1,4 +1,5 @@
-// Backflow station firmware. Steps 1-4 and 6: Wi-Fi, Modbus TCP server, relays follow coils 0/1, inputs, OLED/LEDs/buzzer.
+// Backflow station firmware. Steps 1-6: Wi-Fi, Modbus TCP server, inputs, control logic (auto pump,
+// safe mode, high-level interlock, logic hash), relays, OLED/LEDs/buzzer.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -30,6 +31,8 @@ const uint8_t PIN_BUZZER = 25;        // D25: active buzzer + leg (HIGH = sound)
 const uint32_t PIR_WARMUP_MS = 60000;  // PIR is unreliable after power-on: ignored this long after boot
 const uint32_t PIR_LATCH_MS = 60000;   // PRESENCE stays 1 this long after the last motion
 const uint32_t DEBOUNCE_MS = 30;
+const uint32_t ALARM_SOUND_MS = 8000;  // buzzer time per alarm; the red LED stays on until acknowledged
+const uint32_t BUTTON_LONG_MS = 3000;  // hold this long to toggle SAFE_MODE locally
 const uint32_t DHT_PERIOD_MS = 2500;   // DHT11 limit is 1 read / 2 s
 // Photoresistor module: ours is the 3-pin LM393 type (DO GND VCC, no AO). DO is LOW in light, HIGH
 // in the dark; the light threshold and its hysteresis are set by the module's blue trimmer. The
@@ -116,25 +119,59 @@ void relaysOffAtBoot() {
   digitalWrite(PIN_RELAY2, RELAY_OFF);
 }
 
-// Step 3: relay 1 follows PUMP_CMD, relay 2 follows DOSER_CMD while the pump is on (plain
-// writes; auto mode, safe mode, interlock and the rate > 0 rule are step 5). PUMP_RUNNING / DOSER_RUNNING report exactly what the pins are doing.
-void relaysApply() {
-  static bool pump = false, doser = false;
-  // DOSER_CMD defaults to 1, so the "only while the pump runs" rule from the contract is applied
-  // already: without it relay 2 would click on at every boot.
-  bool wantPump = mb.Coil(C_PUMP_CMD), wantDoser = mb.Coil(C_DOSER_CMD) && wantPump;
-  if (wantPump != pump) {
-    pump = wantPump;
+// ---------------- step 5: control logic ----------------
+// Same rules as sim/station.py Station.step (the reference). Runs every loop, right after
+// mb.task(), so a coil write reaches the relay pin in the same pass.
+const uint16_t DEFAULT_LEVEL_HIGH_SP = 850, DEFAULT_LEVEL_LOW_SP = 400;  // used in SAFE_MODE
+
+void controlApply() {
+  static bool pumpPin = false, doserPin = false;
+  bool safe = mb.Coil(C_SAFE_MODE);
+  uint16_t lo = safe ? DEFAULT_LEVEL_LOW_SP : mb.Hreg(HR_LEVEL_LOW_SP);
+  uint16_t hi = safe ? DEFAULT_LEVEL_HIGH_SP : mb.Hreg(HR_LEVEL_HIGH_SP);
+  uint16_t level = mb.Hreg(HR_TANK_LEVEL_PCT);
+  bool pump = mb.Coil(C_PUMP_CMD);
+  if (safe || mb.Coil(C_AUTO_MODE)) {   // between the setpoints the coil is the memory
+    if (level < lo) pump = true;
+    else if (level > hi) pump = false;
+  }
+  if (mb.Ists(DI_HIGH_LEVEL_SWITCH)) pump = false;          // hard interlock
+  if (pump != mb.Coil(C_PUMP_CMD)) mb.Coil(C_PUMP_CMD, pump);
+  if (safe && mb.Coil(C_DOSER_CMD)) mb.Coil(C_DOSER_CMD, false);
+  // No flow, no dose.
+  bool doser = pump && !safe && mb.Coil(C_DOSER_CMD) && mb.Hreg(HR_DOSER_RATE_PCT) > 0;
+
+  if (pump != pumpPin) {
+    pumpPin = pump;
     digitalWrite(PIN_RELAY1, pump ? RELAY_ON : RELAY_OFF);
     Serial.printf("relay 1 (pump) %s\n", pump ? "ON" : "OFF");
   }
-  if (wantDoser != doser) {
-    doser = wantDoser;
+  if (doser != doserPin) {
+    doserPin = doser;
     digitalWrite(PIN_RELAY2, doser ? RELAY_ON : RELAY_OFF);
     Serial.printf("relay 2 (doser) %s\n", doser ? "ON" : "OFF");
   }
-  mb.Ists(DI_PUMP_RUNNING, pump);
-  mb.Ists(DI_DOSER_RUNNING, doser);
+  mb.Ists(DI_PUMP_RUNNING, pumpPin);    // exactly what the pins are doing
+  mb.Ists(DI_DOSER_RUNNING, doserPin);
+}
+
+// SAFE_MODE: remote writes to coils 0-2 and holding 0-4 are silently ignored (the client still
+// gets a normal reply, as on the software station). Done by putting the values back after
+// mb.task() instead of with onSet callbacks: the library answers a refused single-coil write
+// with an exception, and callbacks would also fire for the station's own writes.
+void modbusTask() {
+  bool locked = mb.Coil(C_SAFE_MODE);
+  bool coils[3];
+  uint16_t hregs[5];
+  if (locked) {
+    for (int i = 0; i < 3; i++) coils[i] = mb.Coil(i);
+    for (int i = 0; i < 5; i++) hregs[i] = mb.Hreg(i);
+  }
+  mb.task();  // non-blocking; returns after at most ~100 ms of work
+  if (locked) {
+    for (int i = 0; i < 3; i++) if (mb.Coil(i) != coils[i]) mb.Coil(i, coils[i]);
+    for (int i = 0; i < 5; i++) if (mb.Hreg(i) != hregs[i]) mb.Hreg(i, hregs[i]);
+  }
 }
 
 // Called every loop: derived read-only registers.
@@ -215,6 +252,20 @@ void inputsUpdate() {
   bool ir = dbIr.update(digitalRead(PIN_IR) == LOW, now);
   if (btn != mb.Ists(DI_LOCAL_BUTTON)) Serial.printf("button %s\n", btn ? "DOWN" : "UP");
   if (ir != mb.Ists(DI_HIGH_LEVEL_SWITCH)) Serial.printf("IR %s\n", ir ? "obstacle" : "clear");
+  // Local operator button: hold 3 s = toggle SAFE_MODE; short press = acknowledge (clear) ALARM.
+  static uint32_t tBtnDown = 0;
+  static bool btnLongDone = false;
+  bool btnWas = mb.Ists(DI_LOCAL_BUTTON);
+  if (btn && !btnWas) { tBtnDown = now; btnLongDone = false; }
+  if (btn && !btnLongDone && now - tBtnDown >= BUTTON_LONG_MS) {
+    btnLongDone = true;
+    mb.Coil(C_SAFE_MODE, !mb.Coil(C_SAFE_MODE));
+    Serial.printf("button long press: SAFE_MODE = %d\n", mb.Coil(C_SAFE_MODE));
+  }
+  if (!btn && btnWas && !btnLongDone && mb.Coil(C_ALARM)) {
+    mb.Coil(C_ALARM, false);
+    Serial.println("button short press: ALARM acknowledged");
+  }
   mb.Ists(DI_LOCAL_BUTTON, btn);
   mb.Ists(DI_HIGH_LEVEL_SWITCH, ir);
 
@@ -356,17 +407,23 @@ void outputsInit() {
   }
 }
 
-// Green = normal, yellow = safe mode, red + buzzer pattern = ALARM coil. Call every loop.
+// Green = normal, yellow = safe mode, red = ALARM coil. The buzzer sounds only for the first
+// ALARM_SOUND_MS after ALARM comes on; the red LED and the flashing screen stay until ALARM is
+// cleared (short button press, or a write of 0). Call every loop.
 void outputsUpdate() {
   uint32_t now = millis();
   bool safe = mb.Coil(C_SAFE_MODE), alarm = mb.Coil(C_ALARM);
   digitalWrite(PIN_LED_GREEN, !safe && !alarm);
   digitalWrite(PIN_LED_YELLOW, safe);
   digitalWrite(PIN_LED_RED, alarm);
-  // Active buzzer: three 150 ms beeps, then quiet, repeating every 1.6 s while ALARM = 1.
+  // Active buzzer: three 150 ms beeps, then quiet, repeating every 1.6 s, for ALARM_SOUND_MS.
+  static bool alarmWas = false;
+  static uint32_t tAlarmOn = 0;
+  if (alarm && !alarmWas) tAlarmOn = now;
+  alarmWas = alarm;
   bool beep = false;
-  if (alarm) {
-    uint32_t ph = now % 1600;
+  if (alarm && now - tAlarmOn < ALARM_SOUND_MS) {
+    uint32_t ph = (now - tAlarmOn) % 1600;
     beep = ph < 900 && (ph % 300) < 150;
   }
   digitalWrite(PIN_BUZZER, beep);
@@ -381,7 +438,7 @@ void setup() {
   Serial.begin(115200);
   pinMode(PIN_LED, OUTPUT);
   outputsInit();
-  Serial.println("\nBackflow station, step 6");
+  Serial.println("\nBackflow station, steps 1-6");
 
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(400000);  // full frame in ~25 ms instead of ~100 ms
@@ -445,9 +502,9 @@ void loop() {
     WiFi.begin(WIFI_SSID, WIFI_PASS);
   }
 
-  if (mbStarted) mb.task();  // non-blocking; returns after at most ~100 ms of work
+  if (mbStarted) modbusTask();
   inputsUpdate();
-  relaysApply();             // right after task(), so a coil write reaches the pin in the same loop
+  controlApply();            // right after task(), so a coil write reaches the pin in the same loop
   modbusUpdate();            // every loop, so LOGIC_HASH never lags a write
   outputsUpdate();
 

@@ -12,7 +12,7 @@ Started by the CompE on Saturday morning to unblock gateway step 13. EE takes ov
 | 2. Modbus server, full register map | done | yes (see below) |
 | 3. Relays follow coils 0 and 1 | done | yes (see below) |
 | 4. Inputs (pot, button, PIR, LDR, DHT11, IR) | done | yes for pot, button, PIR, photoresistor, IR; **DHT11 never answered; being taken off the rig** (registers 1-2 read 0) |
-| 5. Control logic, safe mode, interlock, logic hash | not started | |
+| 5. Control logic, safe mode, interlock, logic hash | done (compiles; same rules as `sim/station.py`). Button: hold 3 s = toggle `SAFE_MODE`, short press = clear `ALARM` | yes, Sun 15 Nov: flashed, `python -m firmware.tools.check_control --host 172.20.10.9 --port 502` passed all 17 checks (run it with twin and gateway stopped; it clicks the relays). Short press clearing `ALARM` confirmed by the operator and over Modbus. 3 s hold for `SAFE_MODE` not tried by hand |
 | 6. OLED screen, LEDs, buzzer | done | yes (see below) |
 | 7. Rig | not started | |
 
