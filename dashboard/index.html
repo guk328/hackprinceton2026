@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Backflow · The safety gateway for water utilities</title>
 <meta name="description" content="Backflow checks every command to a water plant against a physics model before it runs.">
-<link rel="stylesheet" href="landing.css?v=8">
+<link rel="stylesheet" href="landing.css?v=9">
 <link rel="icon" href="data:,">
 </head>
 <body>
@@ -13,11 +13,12 @@
   <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 2.2C12 2.2 4.8 10 4.8 14.8a7.2 7.2 0 0 0 14.4 0C19.2 10 12 2.2 12 2.2z" fill="currentColor"/><path class="tick" d="M8.6 14.6l2.4 2.4 4.4-5" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-hold" viewBox="0 0 16 16"><path d="M5 2.5v11M11 2.5v11" fill="none" stroke="currentColor" stroke-width="3.2"/></symbol>
   <symbol id="i-allow" viewBox="0 0 16 16"><path d="M2 8.5 6 12.5 14 3.5" fill="none" stroke="currentColor" stroke-width="2.6"/></symbol>
+  <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2 9c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2M2 16c2.5 0 2.5-2 5-2s2.5 2 5 2 2.5-2 5-2 2.5 2 5 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
   <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></symbol>
 </defs></svg>
 
 <header class="hero">
-  <canvas id="flow" aria-hidden="true"></canvas>
+  <canvas id="dots" aria-hidden="true"></canvas>
   <nav class="nav">
     <a class="logo" href="index.html"><svg><use href="#i-drop"/></svg>Backflow</a>
     <div class="links glass">
@@ -25,21 +26,26 @@
       <a href="#agent">The agent</a>
       <a href="#who">Who it's for</a>
     </div>
-    <a class="pill" href="login.html">Sign in</a>
+    <a class="pill" id="nav-cta" href="login.html">Sign in</a>
   </nav>
 
   <div class="head">
-    <h1>Every command to your water plant, checked against physics first.</h1>
-    <p>Backflow is a safety gateway that sits in front of the pump controller. A command that would overdose chlorine, overflow a tank or drain the town's pressure is held before it runs.</p>
+    <div class="tags" aria-hidden="true"><span>Modbus gateway</span><span>Physics model</span><span>AI incident agent</span></div>
+    <div class="title">
+      <h1>Unsafe commands never reach the water.</h1>
+      <span class="orb o1" aria-hidden="true"><svg><use href="#i-lock"/></svg></span>
+      <span class="orb o2" aria-hidden="true"><svg><use href="#i-wave"/></svg></span>
+    </div>
+    <p>Backflow checks every command to the pump controller against physics, and holds the dangerous ones.</p>
     <div class="cta">
-      <a class="btn hot" href="login.html">See the live console</a>
-      <a class="btn glass" href="console.html?mode=replay">Watch a recorded incident</a>
+      <a class="btn primary" href="console.html?mode=replay">Watch it stop an attack <span class="arr">→</span></a>
+      <a class="btn glass" href="#how">How it works</a>
     </div>
   </div>
 
   <div class="stage" aria-hidden="true">
     <div class="pc pc-chart">
-      <div class="pc-t">Forecast · chlorine, mg/L</div>
+      <div class="pc-t">Chlorine forecast · mg/L</div>
       <svg viewBox="0 0 300 132">
         <g class="g"><path d="M10 28H290M10 62H290M10 96H290"/></g>
         <rect class="over" x="10" y="6" width="280" height="34"/>
@@ -52,21 +58,20 @@
       </svg>
     </div>
     <div class="pc pc-hold">
-      <div class="row"><span class="badge HOLD"><svg><use href="#i-hold"/></svg>HOLD</span><b>Doser rate 10 % → 100 %</b></div>
-      <div class="why">Chlorine reaches 4 mg/L in 88 min</div>
-      <div class="chips"><span>Command not delivered</span><span class="red">Station alarm on</span></div>
-      <div class="btns"><span class="b dark">Reject and block source</span><span class="b">Approve release</span></div>
+      <div class="row"><span class="badge HOLD"><svg><use href="#i-hold"/></svg>HOLD</span>Doser rate 10 % → 100 %</div>
+      <div class="why">Chlorine hits <em>4 mg/L</em> in 88 min</div>
+      <div class="btns"><span class="b light">Reject and block source</span><span class="b">Approve</span></div>
     </div>
     <div class="pc pc-agent">
       <div class="pc-t"><i></i>Agent briefing</div>
-      <p>Held at 03:00: a write tried to raise the chlorine doser from 10% to 100%. Predicted chlorine passes 4.0 mg/L in about 88 min. Nothing reached the station. Recommend reject.</p>
-      <div class="lock"><svg><use href="#i-lock"/></svg>The agent cannot send commands to the plant</div>
+      <p>A 3 a.m. write tried to max out the chlorine doser. Nothing reached the station. Recommend reject.</p>
+      <div class="lock"><svg><use href="#i-lock"/></svg>No write access to the plant</div>
     </div>
   </div>
 </header>
 
 <section class="why-now">
-  <p><b>July 2026.</b> The FBI and EPA reported attackers changing settings on internet-facing controllers at water systems in at least seven US states. <span>FBI / EPA public service announcement, 30 July 2026</span></p>
+  <p><b>July 2026:</b> attackers changed settings on internet-facing controllers at water systems in at least seven US states. <span>FBI / EPA public service announcement, 30 July 2026</span></p>
 </section>
 
 <section class="sect" id="how">
@@ -146,12 +151,12 @@
 <section class="closer">
   <h2>See it hold a real command.</h2>
   <div class="cta">
-    <a class="btn hot" href="login.html">See the live console</a>
-    <a class="btn glass" href="console.html?mode=replay">Watch a recorded incident</a>
+    <a class="btn primary" href="console.html?mode=replay">Watch it stop an attack <span class="arr">→</span></a>
+    <a class="btn glass live-only" href="login.html">Operator sign-in</a>
   </div>
 </section>
-<footer class="foot"><span class="logo"><svg><use href="#i-drop"/></svg>Backflow</span><span>The safety gateway for water utilities</span><a href="login.html">Operator sign-in</a></footer>
+<footer class="foot"><span class="logo"><svg><use href="#i-drop"/></svg>Backflow</span><span>The safety gateway for water utilities</span><span class="braille" title="Backflow, in braille">⠃⠁⠉⠅⠋⠇⠕⠺</span><a class="live-only" href="login.html">Operator sign-in</a></footer>
 
-<script src="landing.js?v=8"></script>
+<script src="landing.js?v=9"></script>
 </body>
 </html>
