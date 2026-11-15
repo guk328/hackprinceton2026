@@ -136,3 +136,14 @@ def test_slow_walk_through_the_proxy_is_held(station, proxy):
     assert send(proxy.port, fc6(RATE, 60)) == bytes([0x86, EXC_HOLD])
     assert send(proxy.port, fc6(RATE, 85)) == bytes([0x86, EXC_HOLD])
     assert on_station(station, "holding_register", RATE) == 35
+
+
+def test_stranger_is_held_at_the_proxy_and_the_operator_is_not(station, proxy, monkeypatch):
+    """Review finding 2: who and when never held anything. The sim reports nobody on site."""
+    monkeypatch.setenv("DEMO_CLOCK", "03:00")
+    poke.write("coil", PUMP, 1, HOST, proxy.port)                 # scenario 0 from an operator address
+    poke.write("holding", HIGH_SP, 840, HOST, proxy.port)
+    assert on_station(station, "holding_register", HIGH_SP) == 840
+    monkeypatch.setenv("OPERATOR_IPS", "192.0.2.5")               # this machine is no longer on the list
+    assert send(proxy.port, fc6(HIGH_SP, 830)) == bytes([0x86, EXC_HOLD])
+    assert on_station(station, "holding_register", HIGH_SP) == 840

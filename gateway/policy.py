@@ -7,6 +7,7 @@ never be overridden by anyone. APPROVAL_CHECKS hold a write that is safe but unu
 the operator says ALLOW. decide(release=True) is the re-check before a held command is
 forwarded: it runs the safety checks only, on fresh station state.
 """
+import ipaddress
 import os
 import time
 from collections import defaultdict, deque
@@ -25,7 +26,8 @@ ALWAYS_SETTABLE = ("SAFE_MODE", "ALARM")  # setting these to 1 only makes the pl
 
 _regs: RegisterMap | None = None
 
-# Context (who, when, how often). It explains a HOLD/DENY; it never makes a clean write held.
+# Context (who, when, how often). The reasons explain a HOLD/DENY; check_source is the rule
+# that holds on them.
 RATE_WINDOW_S, RATE_MAX = 10.0, 5   # more than RATE_MAX writes in the window is a burst
 DAY_START_H, DAY_END_H = 6, 22      # expected operating hours, local time
 _seen: set[str] = set()
@@ -57,6 +59,35 @@ def now() -> datetime:
     return datetime.now()
 
 
+# Operator addresses: OPERATOR_IPS in .env, comma separated, single addresses or CIDR ranges.
+# Not set at all: only this machine. Set but empty: nobody. An entry that does not parse is
+# skipped, which trusts fewer sources, never more.
+DEFAULT_OPERATOR_IPS = "127.0.0.1"
+
+
+def is_operator(ip: str) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    for entry in os.environ.get("OPERATOR_IPS", DEFAULT_OPERATOR_IPS).split(","):
+        try:
+            if entry.strip() and addr in ipaddress.ip_network(entry.strip(), strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def is_night() -> bool:
+    return not DAY_START_H <= now().hour < DAY_END_H
+
+
+def on_site(station: StationSnapshot) -> bool:
+    di = station.discrete_inputs
+    return bool(di.get("PRESENCE") or di.get("CABINET_OPEN"))
+
+
 def context_reasons(req: WriteRequest, station: StationSnapshot) -> list[str]:
     reasons = []
     first = req.src_ip not in _seen
@@ -70,11 +101,9 @@ def context_reasons(req: WriteRequest, station: StationSnapshot) -> list[str]:
         q.popleft()
     if len(q) > RATE_MAX:
         reasons.append(f"{len(q)} writes in {RATE_WINDOW_S:g} s from this source")
-    hour = now()
-    if not DAY_START_H <= hour.hour < DAY_END_H:
-        reasons.append(f"{hour:%H:%M} is outside operating hours")
-    di = station.discrete_inputs
-    if not di.get("PRESENCE") and not di.get("CABINET_OPEN"):
+    if is_night():
+        reasons.append(f"{now():%H:%M} is outside operating hours")
+    if not on_site(station):
         reasons.append("nobody on site")
     return reasons
 
@@ -194,8 +223,19 @@ def check_large_change(req: WriteRequest, reg: Register | None, station: Station
     return ALLOW, []
 
 
+def check_source(req: WriteRequest, reg: Register | None, station: StationSnapshot):
+    """A setting change from an address that is not on OPERATOR_IPS waits for the operator
+    when it is night or nobody is on site, however harmless it looks. The context reasons
+    added after it say which of the two applied."""
+    if reg is None or is_operator(req.src_ip):
+        return ALLOW, []
+    if is_night() or not on_site(station):
+        return HOLD, [f"source {req.src_ip} is not an operator address: needs operator approval"]
+    return ALLOW, []
+
+
 SAFETY_CHECKS = [check_known, check_envelope, check_safe_mode_clear, check_physics]
-APPROVAL_CHECKS = [check_large_change]
+APPROVAL_CHECKS = [check_large_change, check_source]
 CHECKS = SAFETY_CHECKS + APPROVAL_CHECKS
 
 

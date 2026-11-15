@@ -135,7 +135,7 @@ def test_new_source_is_a_reason_then_seen():
     assert "source not seen before" not in held().reasons
 
 
-def test_context_never_holds_a_clean_write():
+def test_context_never_holds_an_operator_s_clean_write():
     d = decide(reg(1, 800), snap(discrete_inputs={"PRESENCE": 0, "CABINET_OPEN": 0}))
     assert d.decision == ALLOW and d.reasons == []
 
@@ -209,3 +209,51 @@ def test_a_released_step_becomes_the_new_starting_point():
     assert decide(reg(0, 40), rate_snap(10)).decision == HOLD
     assert decide(reg(0, 40), rate_snap(10), release=True).decision == ALLOW   # operator said ALLOW
     assert decide(reg(0, 45), rate_snap(40)).decision == ALLOW
+
+
+# ---- OPERATOR_IPS: who, when and on-site can hold (review finding 2) -----------------------
+
+STRANGER = "198.51.100.9"
+ON_SITE = {"PRESENCE": 1, "CABINET_OPEN": 1}
+
+
+def small(src, **snap_over):
+    """LEVEL_HIGH_SP 850 -> 840: clean by every other rule (scenario 0's setting change)."""
+    return decide(WriteRequest(src, 6, "register", 1, 840, "LEVEL_HIGH_SP"), snap(**snap_over))
+
+
+def test_stranger_is_held_at_night_or_with_nobody_on_site(monkeypatch):
+    d = small(STRANGER)                                           # 14:00, nobody on site
+    assert d.decision == HOLD
+    assert d.reasons[0] == f"source {STRANGER} is not an operator address: needs operator approval"
+    assert "nobody on site" in d.reasons
+    assert small(STRANGER, discrete_inputs=ON_SITE).decision == ALLOW   # day and someone there
+    monkeypatch.setenv("DEMO_CLOCK", "03:00")
+    d = small(STRANGER, discrete_inputs=ON_SITE)
+    assert d.decision == HOLD and any("03:00" in r for r in d.reasons)
+
+
+def test_scenario_0_from_an_operator_address_stays_allowed(monkeypatch):
+    monkeypatch.setenv("DEMO_CLOCK", "03:00")
+    monkeypatch.setenv("OPERATOR_IPS", "10.0.0.0/24, 192.0.2.5")
+    for src in ("192.0.2.5", "10.0.0.77"):
+        assert decide(WriteRequest(src, 5, "coil", 0, 1, "PUMP_CMD"), snap()).decision == ALLOW
+        d = small(src)
+        assert d.decision == ALLOW and d.reasons == []
+    assert small("10.0.1.1").decision == HOLD
+
+
+def test_operator_list_unset_empty_and_garbage(monkeypatch):
+    monkeypatch.delenv("OPERATOR_IPS")
+    assert small("127.0.0.1").decision == ALLOW and small(SRC).decision == HOLD
+    monkeypatch.setenv("OPERATOR_IPS", "")
+    assert small("127.0.0.1").decision == HOLD                    # set but empty: nobody
+    monkeypatch.setenv("OPERATOR_IPS", "everyone, 0.0.0.0/zero, 192.0.2.5")
+    assert small("192.0.2.5").decision == ALLOW and small(SRC).decision == HOLD
+    assert small("not-an-ip").decision == HOLD
+
+
+def test_operator_allow_releases_a_stranger_s_safe_write():
+    assert small(STRANGER).decision == HOLD
+    req = WriteRequest(STRANGER, 6, "register", 1, 840, "LEVEL_HIGH_SP")
+    assert decide(req, snap(), release=True).decision == ALLOW
