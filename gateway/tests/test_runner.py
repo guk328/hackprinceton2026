@@ -1,6 +1,7 @@
 """Runner end to end on the software station, model mocked: attack -> hold -> agent ->
 text -> verified reply. And the operator is still told when the model is unusable."""
 import asyncio
+import struct
 import threading
 import time
 
@@ -179,3 +180,25 @@ def test_template_text_is_short_and_ends_with_the_question():
     t = template_text({"src_ip": "203.0.113.7", "name": "DOSER_RATE_PCT", "old_value": 10,
                        "new_value": 100, "decision": "HOLD", "reasons": ["x" * 500]})
     assert len(t) <= 320 and t.endswith("Reply BLOCK or ALLOW")
+
+
+def test_safe_mode_on_goes_through_and_opens_an_incident(station, make):
+    """Review finding 3: anyone could switch safe mode on (doser off) and nobody was told."""
+    g = make(script=None)
+    poke.write("coil", 3, 1, HOST, g.proxy.port)
+    assert on_station(station, "coil", 3) == 1
+    assert g.wait(lambda: g.channel.inbox())
+    (msg,) = g.channel.inbox()
+    assert "safe mode was switched on from 127.0.0.1" in msg["text"] and len(msg["text"]) <= 320
+    e = g.store.get_event(msg["event_id"])
+    assert e["decision"] == "ALLOW" and e["reasons"][0].startswith("SAFE_MODE_SET")
+
+
+def test_clearing_safe_mode_is_released_by_the_operator_s_allow(station, make):
+    g = make(script=None)
+    poke.write("coil", 3, 1, HOST, station.port)                  # safe mode set on site
+    assert send(g.proxy.port, struct.pack(">BHH", 5, 3, 0x0000)) == bytes([0x85, EXC_HOLD])
+    eid = g.store.list_events(1)[0]["id"]
+    assert g.wait(lambda: g.channel.inbox())
+    assert g.channel.reply(eid, "ALLOW", g.code(eid))[0]
+    assert g.wait(lambda: on_station(station, "coil", 3) == 0)

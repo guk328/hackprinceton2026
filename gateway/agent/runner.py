@@ -1,7 +1,7 @@
 """Incident runner: turns HOLD/DENY events into agent threads, and operator replies into
 their continuation. Runs on the gateway's event loop; the agent itself runs in worker threads.
 
-    event (HOLD/DENY/tamper) -> one incident per source per DEBOUNCE_S -> agent investigates,
+    event (HOLD/DENY/tamper/safe mode switched on) -> one incident per source per DEBOUNCE_S -> agent investigates,
     acts, texts the operator -> verified reply -> BLOCK: source blocked by plain code, agent
     told; ALLOW: agent may ask for release, which re-runs the safety checks.
 
@@ -30,8 +30,22 @@ def is_tamper(event: dict) -> bool:
     return str((event.get("reasons") or [""])[0]).startswith("LOGIC_TAMPER")
 
 
+def is_safe_mode_set(event: dict) -> bool:
+    """An ALLOW that still needs the operator: someone switched safe mode on (policy.SAFE_MODE_SET)."""
+    return str((event.get("reasons") or [""])[0]).startswith("SAFE_MODE_SET")
+
+
+def is_incident(event: dict) -> bool:
+    return event.get("decision") in TRIGGERS or is_safe_mode_set(event)
+
+
 def template_text(event: dict) -> str:
     """The text the operator gets when the agent cannot write one."""
+    if is_safe_mode_set(event):
+        return (f"Backflow: safe mode was switched on from {event.get('src_ip')}. The gateway let it "
+                "through (it never refuses safe mode). The chlorine doser is now off and setting "
+                "changes are ignored until safe mode is cleared. If this was not you, block the "
+                "source. Reply BLOCK or ALLOW")
     if is_tamper(event):
         text = (f"Backflow: station settings were changed behind the gateway "
                 f"({event['reasons'][0][14:]}). The gateway put the last known good settings "
@@ -121,7 +135,7 @@ class Runner:
         try:
             while True:
                 item = await q.get()
-                if "_kind" in item or item.get("decision") not in TRIGGERS:
+                if "_kind" in item or not is_incident(item):
                     continue
                 src, now = item.get("src_ip") or "?", time.monotonic()
                 last = self._recent.get(src)

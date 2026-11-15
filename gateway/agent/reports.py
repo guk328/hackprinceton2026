@@ -55,7 +55,8 @@ def template_report(store, event_id: str) -> str:
         "## What happened",
         f"At {e.get('ts')} the gateway received a write from {e.get('src_ip')}: {what} "
         f"{e.get('old_value')} -> {e.get('new_value')} (event {event_id}, traffic #{e.get('traffic_id')}). "
-        f"Decision: **{e.get('decision')}**. The command did not reach the station.", "",
+        f"Decision: **{e.get('decision')}**. " + ("The command reached the station." if e.get("decision") == "ALLOW"
+                                                   else "The command did not reach the station."), "",
         "Reasons recorded: " + ("; ".join(e.get("reasons") or []) or "none") + ".", "",
         "## Timeline (traffic from this source, newest 30 frames)",
     ]

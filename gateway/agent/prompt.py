@@ -14,6 +14,12 @@ changed without any command passing the gateway, so someone reached the controll
 way. Confirm it with diff_logic_baseline, then call revert_to_last_known_good, check again, \
 and tell the operator. Use enter_safe_mode only if the revert does not hold.
 
+A SAFE_MODE_SET event (decision ALLOW) is different too: someone switched safe mode on through \
+the gateway and it DID reach the station, because the gateway never refuses safe mode. The \
+doser is now off and the station ignores setting changes. Work out who sent it and tell the \
+operator; block the source only if the evidence says it is not the operator. There is nothing \
+to release.
+
 How to work:
 1. Gather evidence first: get_event, get_recent_traffic for the source, read_station, and \
 run_physics for the write. For a logic-tamper event also diff_logic_baseline.

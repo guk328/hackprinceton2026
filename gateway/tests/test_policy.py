@@ -175,7 +175,6 @@ def test_large_step_is_held_for_approval_and_release_skips_only_that():
     assert decide(reg(0, 30), snap()).decision == ALLOW  # within the step limit
     assert decide(reg(0, 40), snap(), release=True).decision == ALLOW
     assert decide(reg(0, 500), snap(), release=True).decision == HOLD      # envelope still holds
-    assert decide(coil(3, 0), snap(), release=True).decision == HOLD       # SAFE_MODE rule too
     assert decide(reg(101, 5), snap(), release=True).decision == DENY      # twin-only too
 
 
@@ -257,3 +256,35 @@ def test_operator_allow_releases_a_stranger_s_safe_write():
     assert small(STRANGER).decision == HOLD
     req = WriteRequest(STRANGER, 6, "register", 1, 840, "LEVEL_HIGH_SP")
     assert decide(req, snap(), release=True).decision == ALLOW
+
+
+# ---- safe mode, alarm and doser shut-off (review finding 3) -------------------------------
+
+def from_stranger(kind, addr, value, **snap_over):
+    name = REGS.lookup("coil" if kind == "coil" else "holding_register", addr).name
+    return decide(WriteRequest(STRANGER, 5 if kind == "coil" else 6, kind, addr, value, name),
+                  snap(discrete_inputs=ON_SITE, **snap_over))     # daytime, someone on site
+
+
+def test_safe_mode_on_is_allowed_but_marked_for_an_incident():
+    d = decide(coil(3, 1), snap())
+    assert d.decision == ALLOW and d.reasons[0].startswith(policy.SAFE_MODE_SET + ":") and SRC in d.reasons[0]
+    assert from_stranger("coil", 3, 1).decision == ALLOW
+    assert decide(coil(3, 1), snap(coils=dict(snap().coils, SAFE_MODE=1))).reasons == []   # already on
+    assert decide(coil(4, 1), snap()).reasons == []                                         # alarm on: silent
+
+
+def test_clearing_safe_mode_is_releasable_with_operator_approval():
+    safe = snap(coils=dict(snap().coils, SAFE_MODE=1, DOSER_CMD=0))
+    assert decide(coil(3, 0), safe).decision == HOLD
+    assert decide(coil(3, 0), safe, release=True).decision == ALLOW
+
+
+@pytest.mark.parametrize("kind,addr", [("coil", 4), ("coil", 1), ("register", 0)])
+def test_alarm_and_doser_off_from_a_stranger_is_held(kind, addr):
+    d = from_stranger(kind, addr, 0, coils=dict(snap().coils, ALARM=1))
+    assert d.decision == HOLD and "turning off the alarm or the chlorine dose" in d.reasons[0], d.reasons
+    name = REGS.lookup("coil" if kind == "coil" else "holding_register", addr).name
+    op = WriteRequest(SRC, 5, kind, addr, 0, name)                # the operator may
+    assert decide(op, snap(discrete_inputs=ON_SITE)).decision == ALLOW
+    assert from_stranger(kind, addr, 1 if kind == "coil" else 12).decision == ALLOW   # not a shut-off

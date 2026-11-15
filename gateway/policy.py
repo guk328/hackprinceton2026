@@ -2,9 +2,9 @@
 
 Every check runs and every reason is kept; the strictest verdict wins (DENY > HOLD > ALLOW).
 
-Two kinds of check. SAFETY_CHECKS (register known, envelope, SAFE_MODE rule, physics) can
-never be overridden by anyone. APPROVAL_CHECKS hold a write that is safe but unusual until
-the operator says ALLOW. decide(release=True) is the re-check before a held command is
+Two kinds of check. SAFETY_CHECKS (register known, envelope, physics) can never be
+overridden by anyone. APPROVAL_CHECKS (clearing SAFE_MODE, a large step, an unknown source)
+hold a write that is safe but unusual until the operator says ALLOW. decide(release=True) is the re-check before a held command is
 forwarded: it runs the safety checks only, on fresh station state.
 """
 import ipaddress
@@ -23,6 +23,9 @@ ALLOW, HOLD, DENY = "ALLOW", "HOLD", "DENY"
 _RANK = {ALLOW: 0, HOLD: 1, DENY: 2}
 _REG_KIND = {"coil": "coil", "register": "holding_register"}
 ALWAYS_SETTABLE = ("SAFE_MODE", "ALARM")  # setting these to 1 only makes the plant safer
+
+SAFE_MODE_SET = "SAFE_MODE_SET"   # first word of the reason on that ALLOW event; the runner opens an incident
+SHUT_OFF = ("ALARM", "DOSER_CMD", "DOSER_RATE_PCT")   # writing 0 silences the alarm or stops chlorination
 
 _regs: RegisterMap | None = None
 
@@ -226,16 +229,20 @@ def check_large_change(req: WriteRequest, reg: Register | None, station: Station
 def check_source(req: WriteRequest, reg: Register | None, station: StationSnapshot):
     """A setting change from an address that is not on OPERATOR_IPS waits for the operator
     when it is night or nobody is on site, however harmless it looks. The context reasons
-    added after it say which of the two applied."""
+    added after it say which of the two applied. Switching off the alarm or the chlorine
+    dose from such an address always waits: the harm is slower than the physics horizon."""
     if reg is None or is_operator(req.src_ip):
         return ALLOW, []
+    if req.value == 0 and reg.name in SHUT_OFF:      # at any hour, whoever is on site
+        return HOLD, [f"{reg.name} -> 0 from {req.src_ip}, not an operator address: turning off the "
+                      "alarm or the chlorine dose needs operator approval"]
     if is_night() or not on_site(station):
         return HOLD, [f"source {req.src_ip} is not an operator address: needs operator approval"]
     return ALLOW, []
 
 
-SAFETY_CHECKS = [check_known, check_envelope, check_safe_mode_clear, check_physics]
-APPROVAL_CHECKS = [check_large_change, check_source]
+SAFETY_CHECKS = [check_known, check_envelope, check_physics]
+APPROVAL_CHECKS = [check_safe_mode_clear, check_large_change, check_source]
 CHECKS = SAFETY_CHECKS + APPROVAL_CHECKS
 
 
@@ -247,6 +254,10 @@ def decide(req: WriteRequest, station: StationSnapshot, *,
     reg = regs.lookup(_REG_KIND.get(req.kind, req.kind), req.address)
 
     if reg is not None and reg.kind == "coil" and reg.name in ALWAYS_SETTABLE and req.value == 1:
+        if reg.name == "SAFE_MODE" and not release and station.coils.get("SAFE_MODE") != 1:
+            # Never refused, but never silent: safe mode stops the doser, so the operator hears of it.
+            return Decision(ALLOW, [f"{SAFE_MODE_SET}: safe mode switched on from {req.src_ip}; the doser "
+                                    "is off and settings are locked until it is cleared"])
         return Decision(ALLOW)
 
     verdict, reasons, prediction = ALLOW, [], None
