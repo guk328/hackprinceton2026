@@ -3,7 +3,9 @@
     GET  /events            newest first, ?limit=100; trajectory omitted (it is ~88 KB)
     GET  /events/{id}       one event, with the full prediction trajectory
     GET  /state             last station snapshot (raw registers + README 4.4 `station` view)
-    GET  /stream            server-sent events: every new event as it is saved (no trajectory)
+    GET  /stream            server-sent events: "event" for every new event (no trajectory),
+                            "agent" for every agent step and operator text
+    GET  /agent/log         stored agent steps, oldest first, ?limit=200
     POST /operator/reply    {"reply": "ALLOW"|"BLOCK", "event_id": "evt_0042"} -> inbox queue
     GET  /reports/{id}      gateway/reports/<id>.md as text
     GET  /                  dashboard/ (static, mounted last so the routes above win)
@@ -76,10 +78,17 @@ def create_app(store: EventStore, poller=None, station_view=None,
         q = store.subscribe()
         try:
             while True:
-                event = await q.get()
-                yield ServerSentEvent(data=slim(event), event="event", id=event["id"])
+                item = await q.get()
+                if "_kind" in item:          # agent activity, operator texts
+                    yield ServerSentEvent(data=item, event=item["_kind"])
+                else:
+                    yield ServerSentEvent(data=slim(item), event="event", id=item["id"])
         finally:
             store.unsubscribe(q)
+
+    @app.get("/agent/log")
+    def agent_log(limit: int = Query(200, ge=1, le=1000)):
+        return store.list_agent_steps(limit)
 
     @app.post("/operator/reply", status_code=202)
     async def operator_reply(body: OperatorReply):

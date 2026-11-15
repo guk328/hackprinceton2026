@@ -5,7 +5,9 @@
     query_traffic(src_ip, minutes, limit) -> list[dict]   frames, oldest first
 
 plus save_traffic() (one row per Modbus frame the proxy sees) and subscribe() (a
-queue of new events per consumer: dashboard, agent runner).
+queue of new events per consumer: dashboard, agent runner). Agent activity
+(save_agent_step) goes to the same subscribers as dicts with "_kind": "agent";
+events have no "_kind". The spend table is the model-cost ledger (agent/budget.py).
 
 DATABASE_URL picks the backend. Only sqlite:/// is implemented; any other scheme
 raises, so a Postgres URL is never silently ignored. To move to Postgres/Tiger
@@ -66,6 +68,22 @@ CREATE TABLE IF NOT EXISTS traffic (
     raw       TEXT
 );
 CREATE INDEX IF NOT EXISTS traffic_src ON traffic (src_ip, id);
+CREATE TABLE IF NOT EXISTS agent_log (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       TEXT NOT NULL,
+    event_id TEXT,
+    kind     TEXT NOT NULL,
+    text     TEXT,
+    data     TEXT
+);
+CREATE TABLE IF NOT EXISTS spend (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            TEXT NOT NULL,
+    event_id      TEXT,
+    input_tokens  INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL,
+    cost_usd      REAL NOT NULL
+);
 """
 
 _EVENT_FIELDS = ("src_ip", "function", "kind", "address", "name", "old_value",
@@ -198,6 +216,47 @@ class EventStore:
             ids = [r["id"] for r in self._db.execute(
                 "SELECT id FROM events ORDER BY seq DESC LIMIT ?", (limit,))]
         return [self.get_event(i) for i in ids]
+
+    # ------------------------------------------------------------ agent steps
+
+    def save_agent_step(self, event_id: str | None, kind: str, text: str = "",
+                        data: dict | None = None) -> dict:
+        """One line of agent activity (tool call, note, verdict, operator text...). Stored for
+        page reloads and offered to subscribers as a message with "_kind": "agent"."""
+        ts = utc_now(ms=True)
+        with self._lock:
+            cur = self._db.execute(
+                "INSERT INTO agent_log (ts, event_id, kind, text, data) VALUES (?,?,?,?,?)",
+                (ts, event_id, kind, text, None if data is None else json.dumps(jsonable(data))))
+            self._db.commit()
+        step = {"_kind": "agent", "id": cur.lastrowid, "ts": ts, "event_id": event_id,
+                "kind": kind, "text": text, "data": data}
+        self._publish(step)
+        return step
+
+    def list_agent_steps(self, limit: int = 200, event_id: str | None = None) -> list[dict]:
+        """The newest `limit` steps, oldest first."""
+        sql, args = "SELECT * FROM agent_log", []
+        if event_id is not None:
+            sql, args = sql + " WHERE event_id = ?", [event_id]
+        with self._lock:
+            rows = self._db.execute(sql + " ORDER BY id DESC LIMIT ?", (*args, limit)).fetchall()
+        return [{"id": r["id"], "ts": r["ts"], "event_id": r["event_id"], "kind": r["kind"],
+                 "text": r["text"], "data": None if r["data"] is None else json.loads(r["data"])}
+                for r in reversed(rows)]
+
+    # ------------------------------------------------------------------ spend
+
+    def add_spend(self, event_id, input_tokens: int, output_tokens: int, cost_usd: float):
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO spend (ts, event_id, input_tokens, output_tokens, cost_usd)"
+                " VALUES (?,?,?,?,?)", (utc_now(), event_id, input_tokens, output_tokens, cost_usd))
+            self._db.commit()
+
+    def total_spend(self) -> float:
+        with self._lock:
+            return self._db.execute("SELECT COALESCE(SUM(cost_usd), 0) FROM spend").fetchone()[0]
 
     # ------------------------------------------------------------------ queue
 

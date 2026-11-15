@@ -11,6 +11,8 @@ venv/
 
 # runtime output
 *.db
+*.db-shm
+*.db-wal
 gateway/reports/
 sim/inputs.json
 
