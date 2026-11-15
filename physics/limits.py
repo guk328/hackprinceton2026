@@ -1,13 +1,14 @@
 """Engineering-unit limits for the currently implemented demo checks."""
 
-# EPA chlorine MRDL benchmark, 4.0 mg/L as Cl2:
-# https://www.epa.gov/ground-water-and-drinking-water/national-primary-drinking-water-regulations
+# Source audit 2026-11-15: EPA chlorine MRDL benchmark, 4.0 mg/L as Cl2:
+# https://www.ecfr.gov/current/title-40/chapter-I/subchapter-D/part-141/subpart-G/section-141.65
 # Instantaneous tank threshold is our demo guard, not a regulatory compliance test.
 # Compliance averaging context (running annual average of monthly averages):
 # https://www.oregon.gov/oha/ph/healthyenvironments/drinkingwater/monitoring/pages/mon-mrdl.aspx
 CHLORINE_HIGH_MGL = 4.0
 
-# PROMPT_ME.md design assumption: reserve 5% tank headroom, not a universal limit.
+# Demo assumption: 5% nominal headroom; actual spill elevation is site-specific.
+# EPA storage guidance supports controls, not this 95% value (research.md step 11).
 TANK_OVERFLOW_PCT = 95.0
 
 # Normal envelope from shared/registers.yaml, decoded into engineering units.
@@ -19,12 +20,19 @@ SETPOINT_BOUNDS = {
     "chlorine_target_mgl": (0.2, 4.0, "mg/L"),
 }
 
-# Provisional demo residual floor from PROMPT_ME.md; applicability/source
-# verification belongs to research step 11, not a universal compliance claim.
+# Benchmark: 40 CFR 141.72(a)(3)/(b)(2), covered surface-water/GWUDI systems,
+# distribution-entry residual with a four-hour provision. Our immediate tank
+# guard does not implement those rules or certify disinfection adequacy.
+# https://www.ecfr.gov/current/title-40/chapter-I/subchapter-D/part-141/subpart-H/section-141.72
 CHLORINE_LOW_MGL = 0.2
-# Demo pressure proxy: no hydraulic network/pressure calculation is modelled.
+# Demo low-storage proxy only: no pressure [psi] calculated or universal 15% rule.
+# EPA sanitary-survey guide ch. 10: elevations/demand/pressure limits are site-specific.
+# https://www.epa.gov/sites/default/files/2019-08/documents/sanitary_survey_learners_guide_508_8.27.19.pdf
 PRESSURE_LOSS_PCT = 15.0
-# Demo motor-protection assumption; verify against the chosen motor in step 11.
+# Unvalidated demo assumption; require actual motor/starter duty limits.
+# Example only: Franklin 12-inch rewindable motor specifies 5 starts/hour,
+# so our 6 would NOT adequately protect that motor. See research.md step 11.
+# https://www.franklinwater.com/products/submersible-motors-and-control-boxes/12-inch-submersible-motors/12-inch-rewindable-motor/
 MAX_PUMP_STARTS_PER_HOUR = 6
 PUMP_START_WINDOW_S = 3600.0
 
