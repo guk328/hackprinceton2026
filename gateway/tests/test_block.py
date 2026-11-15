@@ -79,8 +79,8 @@ def test_later_write_is_judged_against_the_earlier_one(station, proxy):
     """Split attack: rate up while the doser is off, then doser on."""
     poke.write("coil", PUMP, 1, HOST, proxy.port)
     poke.write("coil", DOSER, 0, HOST, proxy.port)
-    for rate in (35, 60, 85, 100):                            # allowed: doser is off, small steps
-        poke.write("holding", RATE, rate, HOST, proxy.port)
+    poke.write("holding", RATE, 85, HOST, station.port)       # test setup, straight to the station
+    poke.write("holding", RATE, 100, HOST, proxy.port)        # allowed: doser is off, small step
     assert send(proxy.port, struct.pack(">BHH", 5, DOSER, 0xFF00)) == bytes([0x85, EXC_HOLD])
     assert on_station(station, "coil", DOSER) == 0
 
@@ -88,8 +88,7 @@ def test_later_write_is_judged_against_the_earlier_one(station, proxy):
 def test_split_attack_pipelined_in_one_tcp_segment(station, proxy):
     poke.write("coil", PUMP, 1, HOST, proxy.port)
     poke.write("coil", DOSER, 0, HOST, proxy.port)
-    for rate in (35, 60, 85):                                 # under the large-step rule
-        poke.write("holding", RATE, rate, HOST, proxy.port)
+    poke.write("holding", RATE, 85, HOST, station.port)       # test setup, straight to the station
     with socket.create_connection((HOST, proxy.port), timeout=5) as s:
         s.sendall(adu(fc6(RATE, 100), tid=1) + adu(struct.pack(">BHH", 5, DOSER, 0xFF00), tid=2))
         replies = {r[1]: r[7:] for r in (recv_frame(s), recv_frame(s))}
@@ -128,3 +127,12 @@ def test_broken_decide_holds(station, proxy, monkeypatch):
     monkeypatch.setattr("gateway.policy.decide", boom)
     assert send(proxy.port, fc6(RATE, 20)) == bytes([0x86, EXC_HOLD])
     assert on_station(station, "holding_register", RATE) == 10
+
+
+def test_slow_walk_through_the_proxy_is_held(station, proxy):
+    """Review finding 1: 10 -> 35 -> 60 -> 85 in steps of 25 reached 85 % with no hold."""
+    poke.write("coil", PUMP, 1, HOST, proxy.port)
+    poke.write("holding", RATE, 35, HOST, proxy.port)
+    assert send(proxy.port, fc6(RATE, 60)) == bytes([0x86, EXC_HOLD])
+    assert send(proxy.port, fc6(RATE, 85)) == bytes([0x86, EXC_HOLD])
+    assert on_station(station, "holding_register", RATE) == 35

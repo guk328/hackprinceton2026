@@ -177,3 +177,35 @@ def test_large_step_is_held_for_approval_and_release_skips_only_that():
     assert decide(reg(0, 500), snap(), release=True).decision == HOLD      # envelope still holds
     assert decide(coil(3, 0), snap(), release=True).decision == HOLD       # SAFE_MODE rule too
     assert decide(reg(101, 5), snap(), release=True).decision == DENY      # twin-only too
+
+
+# ---- large step over a rolling window (review finding 1) ----------------------------------
+
+def rate_snap(rate):
+    return snap(holding=dict(snap().holding, DOSER_RATE_PCT=rate))
+
+
+def test_slow_walk_is_measured_from_where_it_started(monkeypatch):
+    """10 -> 35 -> 60 -> 85 in steps of 25 used to pass every time."""
+    assert decide(reg(0, 35), rate_snap(10)).decision == ALLOW
+    d = decide(reg(0, 60), rate_snap(35))
+    assert d.decision == HOLD
+    assert any("DOSER_RATE_PCT 10 -> 60 within 30 min is a large step" in r for r in d.reasons), d.reasons
+    assert decide(reg(0, 45), rate_snap(35)).decision == HOLD       # 10 -> 45 is still 35
+    assert decide(reg(1, 840), rate_snap(35)).decision == ALLOW     # other registers unaffected
+
+
+def test_walk_window_expires_after_30_minutes(monkeypatch):
+    t = [1000.0]
+    monkeypatch.setattr(policy, "monotonic", lambda: t[0])
+    assert decide(reg(0, 35), rate_snap(10)).decision == ALLOW
+    t[0] += policy.STEP_WINDOW_S - 60
+    assert decide(reg(0, 36), rate_snap(35)).decision == HOLD       # 10 was seen 29 min ago
+    t[0] += policy.STEP_WINDOW_S + 1
+    assert decide(reg(0, 60), rate_snap(35)).decision == ALLOW      # only 35 in the window now
+
+
+def test_a_released_step_becomes_the_new_starting_point():
+    assert decide(reg(0, 40), rate_snap(10)).decision == HOLD
+    assert decide(reg(0, 40), rate_snap(10), release=True).decision == ALLOW   # operator said ALLOW
+    assert decide(reg(0, 45), rate_snap(40)).decision == ALLOW

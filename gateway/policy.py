@@ -30,11 +30,17 @@ RATE_WINDOW_S, RATE_MAX = 10.0, 5   # more than RATE_MAX writes in the window is
 DAY_START_H, DAY_END_H = 6, 22      # expected operating hours, local time
 _seen: set[str] = set()
 _recent: dict[str, deque] = defaultdict(deque)
+# Large-step rule: what each setting was over the last STEP_WINDOW_S, so a walk in small
+# steps is measured from where it started. name -> (time last seen, value the station held).
+STEP_WINDOW_S = 30 * 60
+_levels: dict[str, deque] = defaultdict(lambda: deque(maxlen=64))
+monotonic = time.monotonic   # tests move this clock
 
 
 def reset_context() -> None:
     _seen.clear()
     _recent.clear()
+    _levels.clear()
 
 
 def now() -> datetime:
@@ -133,15 +139,25 @@ LARGE_STEP_FRACTION = 0.25   # of the register's envelope (max - min)
 
 def check_large_change(req: WriteRequest, reg: Register | None, station: StationSnapshot):
     """A big jump in a control setting waits for the operator even when the model says it
-    is safe (scenario 5). The operator's ALLOW overrides this, and only this."""
+    is safe (scenario 5). The jump is measured from every value the setting had in the last
+    STEP_WINDOW_S, not only the current one, so 10 -> 35 -> 60 is a step of 50. The
+    operator's ALLOW overrides this, and only this."""
     if reg is None or reg.kind != "holding_register" or reg.min is None or reg.max is None:
         return ALLOW, []
     old = station.holding.get(reg.name)
     if old is None:
         return ALLOW, []   # unknown state: the physics check holds
     limit = LARGE_STEP_FRACTION * (reg.max - reg.min)
-    if abs(req.value - old) > limit:
-        return HOLD, [f"{reg.name} {old} -> {req.value} is a large step (over {limit:g}): "
+    t, seen = monotonic(), _levels[reg.name]
+    while seen and t - seen[0][0] > STEP_WINDOW_S:
+        seen.popleft()
+    if seen and seen[-1][1] == old:
+        seen.pop()
+    seen.append((t, old))          # only values read from the station, never a requested one
+    start = max((v for _, v in seen), key=lambda v: abs(req.value - v))
+    if abs(req.value - start) > limit:
+        span = "" if start == old else f" within {STEP_WINDOW_S // 60} min"
+        return HOLD, [f"{reg.name} {start} -> {req.value}{span} is a large step (over {limit:g}): "
                       "needs operator approval"]
     return ALLOW, []
 
@@ -173,6 +189,8 @@ def decide(req: WriteRequest, station: StationSnapshot, *,
         if _RANK[v] > _RANK[verdict]:
             verdict = v
     if release:           # the operator has already weighed who, when and how big
+        if verdict == ALLOW and reg is not None:
+            _levels.pop(reg.name, None)   # the approved value is the new starting point
         return Decision(verdict, reasons, prediction)
     ctx = context_reasons(req, station)
     if verdict != ALLOW:
