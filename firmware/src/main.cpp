@@ -1,4 +1,4 @@
-// Backflow station firmware. Steps 1-4: Wi-Fi + OLED, Modbus TCP server, relays follow coils 0/1, inputs.
+// Backflow station firmware. Steps 1-4 and 6: Wi-Fi, Modbus TCP server, relays follow coils 0/1, inputs, OLED/LEDs/buzzer.
 #include <Arduino.h>
 #include <WiFi.h>
 #include <Wire.h>
@@ -21,6 +21,10 @@ const uint8_t PIN_DHT = 4;            // D4: DHT11 data
 const uint8_t PIN_PIR = 19;           // D19: PIR OUT
 const uint8_t PIN_IR = 18;            // D18: IR module OUT (active LOW)
 const uint8_t PIN_BUTTON = 23;        // D23: button to GND, INPUT_PULLUP
+const uint8_t PIN_LED_GREEN = 16;     // RX2: green LED via 120 ohm
+const uint8_t PIN_LED_YELLOW = 17;    // TX2: yellow LED via 120 ohm
+const uint8_t PIN_LED_RED = 32;       // D32: red LED via 120 ohm
+const uint8_t PIN_BUZZER = 25;        // D25: active buzzer + leg (HIGH = sound)
 
 // Input tuning (step 4)
 const uint32_t PIR_WARMUP_MS = 60000;  // PIR is unreliable after power-on: ignored this long after boot
@@ -290,33 +294,97 @@ uint8_t scanOled() {
   return found;
 }
 
+// ---------------- step 6: screen, LEDs, buzzer ----------------
+// Screen layout (128x64): tank bar on the left, big level and chlorine, pump/doser blocks
+// (filled = running), mode + IP at the bottom. ALARM flashes the whole screen inverted.
+void drawBlock(int x, int y, const char *label, bool on) {
+  if (on) {
+    oled.fillRect(x, y, 48, 13, SSD1306_WHITE);
+    oled.setTextColor(SSD1306_BLACK);
+  } else {
+    oled.drawRect(x, y, 48, 13, SSD1306_WHITE);
+    oled.setTextColor(SSD1306_WHITE);
+  }
+  oled.setTextSize(1);
+  oled.setCursor(x + (48 - 6 * (int)strlen(label)) / 2, y + 3);
+  oled.print(label);
+  oled.setTextColor(SSD1306_WHITE);
+}
+
 void drawScreen() {
   if (!oledOk) return;
   bool up = WiFi.status() == WL_CONNECTED;
+  uint16_t level = mb.Hreg(HR_TANK_LEVEL_PCT);  // x10
+  uint16_t cl = mb.Hreg(HR_CHLORINE_MGL);       // x100
+  bool safe = mb.Coil(C_SAFE_MODE), alarm = mb.Coil(C_ALARM), autoMode = mb.Coil(C_AUTO_MODE);
+
   oled.clearDisplay();
   oled.setTextColor(SSD1306_WHITE);
+
+  // Tank bar: 20 px wide, full height, filled from the bottom.
+  int fill = constrain((int)level, 0, 1000) * 60 / 1000;
+  oled.drawRect(0, 0, 20, 64, SSD1306_WHITE);
+  oled.fillRect(2, 62 - fill, 16, fill, SSD1306_WHITE);
+
+  // Level, big.
   oled.setTextSize(2);
-  oled.setCursor(0, 0);
-  oled.print("BACKFLOW");
+  oled.setCursor(26, 0);
+  oled.printf("%u.%u%%", level / 10, level % 10);
+  // Chlorine, big, with small unit.
+  oled.setCursor(26, 18);
+  oled.printf("%u.%02u", cl / 100, cl % 100);
   oled.setTextSize(1);
-  oled.setCursor(0, 24);
-  oled.print(up ? "WiFi OK  " : "WiFi ... ");
-  oled.print(WIFI_SSID);
-  oled.setCursor(0, 40);
-  oled.print("IP ");
-  if (up) oled.print(WiFi.localIP()); else oled.print("-");
-  oled.setCursor(0, 54);
-  oled.printf("up %lus", (unsigned long)(millis() / 1000));
+  oled.setCursor(oled.getCursorX() + 2, 25);
+  oled.print("mg/L");
+
+  drawBlock(26, 36, "PUMP", mb.Ists(DI_PUMP_RUNNING));
+  drawBlock(78, 36, "DOSE", mb.Ists(DI_DOSER_RUNNING));
+
+  // Bottom line: mode + IP.
+  oled.setCursor(26, 55);
+  oled.print(alarm ? "ALARM" : safe ? "SAFE " : autoMode ? "AUTO " : "MAN  ");
+  oled.setCursor(58, 55);
+  if (up) oled.print(WiFi.localIP()); else oled.print("no WiFi");
   oled.display();
+}
+
+void outputsInit() {
+  for (uint8_t p : {PIN_LED_GREEN, PIN_LED_YELLOW, PIN_LED_RED, PIN_BUZZER}) {
+    digitalWrite(p, LOW);
+    pinMode(p, OUTPUT);
+    digitalWrite(p, LOW);
+  }
+}
+
+// Green = normal, yellow = safe mode, red + buzzer pattern = ALARM coil. Call every loop.
+void outputsUpdate() {
+  uint32_t now = millis();
+  bool safe = mb.Coil(C_SAFE_MODE), alarm = mb.Coil(C_ALARM);
+  digitalWrite(PIN_LED_GREEN, !safe && !alarm);
+  digitalWrite(PIN_LED_YELLOW, safe);
+  digitalWrite(PIN_LED_RED, alarm);
+  // Active buzzer: three 150 ms beeps, then quiet, repeating every 1.6 s while ALARM = 1.
+  bool beep = false;
+  if (alarm) {
+    uint32_t ph = now % 1600;
+    beep = ph < 900 && (ph % 300) < 150;
+  }
+  digitalWrite(PIN_BUZZER, beep);
+  // Screen flashes inverted once a second while alarmed.
+  static bool inverted = false;
+  bool wantInv = alarm && (now / 500) % 2;
+  if (oledOk && wantInv != inverted) { inverted = wantInv; oled.invertDisplay(inverted); }
 }
 
 void setup() {
   relaysOffAtBoot();  // first thing, before serial, OLED or Wi-Fi
   Serial.begin(115200);
   pinMode(PIN_LED, OUTPUT);
-  Serial.println("\nBackflow station, step 4");
+  outputsInit();
+  Serial.println("\nBackflow station, step 6");
 
   Wire.begin(PIN_SDA, PIN_SCL);
+  Wire.setClock(400000);  // full frame in ~25 ms instead of ~100 ms
   uint8_t addr = scanOled();
   if (addr) {
     oledOk = oled.begin(SSD1306_SWITCHCAPVCC, addr);
@@ -381,8 +449,9 @@ void loop() {
   inputsUpdate();
   relaysApply();             // right after task(), so a coil write reaches the pin in the same loop
   modbusUpdate();            // every loop, so LOGIC_HASH never lags a write
+  outputsUpdate();
 
-  if (now - tScreen >= 1000) {
+  if (now - tScreen >= 500) {
     tScreen = now;
     drawScreen();
   }

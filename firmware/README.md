@@ -13,7 +13,7 @@ Started by the CompE on Saturday morning to unblock gateway step 13. EE takes ov
 | 3. Relays follow coils 0 and 1 | done | yes (see below) |
 | 4. Inputs (pot, button, PIR, LDR, DHT11, IR) | done | yes for pot, button, PIR, photoresistor, IR; **DHT11 never answered; being taken off the rig** (registers 1-2 read 0) |
 | 5. Control logic, safe mode, interlock, logic hash | not started | |
-| 6. OLED screen, LEDs, buzzer | not started | |
+| 6. OLED screen, LEDs, buzzer | done | yes (see below) |
 | 7. Rig | not started | |
 
 ## Build and flash
@@ -59,9 +59,10 @@ python -m platformio device monitor          # 115200 baud, Ctrl+C to quit
 | PIR OUT -> `PRESENCE` | 19 (`D19`) | in code (step 4) |
 | IR module OUT -> `HIGH_LEVEL_SWITCH` | 18 (`D18`), active LOW | in code (step 4) |
 | Button -> `LOCAL_BUTTON` | 23 (`D23`), `INPUT_PULLUP`, other leg to GND | in code (step 4) |
-
-Planned pins for later steps (buzzer, LEDs) are in `docs/prompts/PROMPT_EE.md`; they move into
-this table when the code uses them.
+| Green LED (normal) | 16 (printed `RX2`), 120 ohm | in code and wired (step 6) |
+| Yellow LED (safe mode) | 17 (printed `TX2`), 120 ohm | in code and wired (step 6) |
+| Red LED (ALARM) | 32 (`D32`), 120 ohm | in code and wired (step 6) |
+| Active buzzer (ALARM) | 25 (`D25`), HIGH = sound | in code and wired (step 6) |
 
 ## Wiring (module pin -> ESP32 pin)
 
@@ -147,6 +148,14 @@ Step 4 on the real board (all watched over Modbus with `sim.poke`'s `read_all`, 
 - DHT11: **fails**. The sensor never answers the start pulse ("stage 1" in the serial log, line idles high). Firmware reader fixed for a release-timing race; still no answer, so wiring is suspected. `CABINET_TEMP_C` / `CABINET_HUMIDITY` stay 0.
 - Serial tip: `python -m platformio device monitor` (and pyserial with default settings) toggles DTR/RTS and resets the board; open the port with DTR and RTS held low to read the log without a reboot.
 - LED resistors on this build are 120 ohm (brown-red-black-black-brown), about 11-12 mA per LED: fine for an ESP32 pin.
+
+Step 6 on the real board (scripted `pymodbus` writes, run twice, operator watching):
+- Screen: tank bar (left), level `60.0%` and chlorine `1.00 mg/L` in size-2 text, PUMP/DOSE boxes (filled white = running, from `PUMP_RUNNING`/`DOSER_RUNNING`), bottom line mode (`AUTO`/`MAN`/`SAFE`/`ALARM`) + IP. Redrawn every 500 ms; I2C at 400 kHz so a frame takes about 25 ms (blocking: a demo hack, acceptable at this rate).
+- `ALARM = 1`: red LED, active buzzer three 150 ms beeps every 1.6 s, screen flashes inverted, `ALARM` on screen. `ALARM = 0` stops all of it.
+- `SAFE_MODE = 1`: yellow LED, green off, `SAFE` on screen. Green is on only when neither SAFE_MODE nor ALARM is set.
+- Tank 25.0 % / chlorine 1.80 written to holding 100/101: bar and numbers follow; `PUMP_CMD = 1`: relay clicks and both boxes fill. Defaults restored afterwards and read back.
+- Modbus reads during the run (alarm flashing, redraws): median 15-16 ms, p95 54-56 ms, max 79-91 ms over about 205 reads.
+- Operator confirmed every stage by eye, OLED readable at about a metre, buzzer loud enough.
 
 ## Acceptance tests
 
