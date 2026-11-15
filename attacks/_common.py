@@ -1,4 +1,4 @@
-"""Small shared CLI helpers for the two owned-rig demo scenarios."""
+"""Small shared CLI helpers for the owned-rig demo scenarios."""
 import argparse
 import json
 
@@ -35,9 +35,11 @@ def write(link, kind, address, value, name, expected="ALLOW"):
         response = link.client.write_register(address, value, device_id=link.regs.unit_id)
     error = response.isError()
     code = getattr(response, "exception_code", None) if error else None
-    decision = "HOLD" if error and code == 6 else "ERROR" if error else "ALLOW"
+    # Gateway replies: 6 = held for review, 1 = denied outright. Anything else is a fault.
+    decision = {6: "HOLD", 1: "DENY"}.get(code, "ERROR") if error else "ALLOW"
     emit("response", operation="write", name=name, decision=decision,
          exception_code=code, detail=str(response))
-    if decision != expected:
-        raise RuntimeError(f"{name}: expected {expected}, received {decision} (exception={code})")
-    return response
+    allowed = (expected,) if isinstance(expected, str) else tuple(expected)
+    if decision not in allowed:
+        raise RuntimeError(f"{name}: expected {' or '.join(allowed)}, received {decision} (exception={code})")
+    return decision

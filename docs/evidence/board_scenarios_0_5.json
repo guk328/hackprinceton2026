@@ -1,0 +1,520 @@
+{
+ "recorded": "2026-11-15, real ESP32 station (firmware steps 1-6) at 172.20.10.9:502 via gateway :1502, twin at speedup 60, agent claude-haiku-5-5",
+ "scenarios": {
+  "0": "evt_0001-0002",
+  "1": "evt_0003-0004",
+  "2": "evt_0005-0006",
+  "4": "evt_0007",
+  "5": "evt_0008",
+  "3": "evt_0009-0010"
+ },
+ "events": [
+  {
+   "id": "evt_0001",
+   "ts": "2026-11-15T05:47:26Z",
+   "src_ip": "127.0.0.1",
+   "function": 5,
+   "kind": "coil",
+   "address": 0,
+   "name": "PUMP_CMD",
+   "old_value": 0,
+   "new_value": 1,
+   "decision": "ALLOW",
+   "reasons": [],
+   "prediction": {
+    "safe": true,
+    "violations": []
+   },
+   "station": {
+    "presence": false,
+    "cabinet_open": false,
+    "level_pct": 58.1,
+    "chlorine_mgl": 0.99
+   },
+   "traffic_id": 7
+  },
+  {
+   "id": "evt_0002",
+   "ts": "2026-11-15T05:47:26Z",
+   "src_ip": "127.0.0.1",
+   "function": 6,
+   "kind": "register",
+   "address": 1,
+   "name": "LEVEL_HIGH_SP",
+   "old_value": 850,
+   "new_value": 840,
+   "decision": "ALLOW",
+   "reasons": [],
+   "prediction": {
+    "safe": true,
+    "violations": []
+   },
+   "station": {
+    "presence": false,
+    "cabinet_open": false,
+    "level_pct": 58.1,
+    "chlorine_mgl": 0.99
+   },
+   "traffic_id": 11
+  },
+  {
+   "id": "evt_0003",
+   "ts": "2026-11-15T05:47:30Z",
+   "src_ip": "127.0.0.1",
+   "function": 6,
+   "kind": "register",
+   "address": 0,
+   "name": "DOSER_RATE_PCT",
+   "old_value": 10,
+   "new_value": 100,
+   "decision": "HOLD",
+   "reasons": [
+    "CHLORINE_HIGH in 109 min",
+    "DOSER_RATE_PCT 10 -> 100 is a large step (over 25): needs operator approval",
+    "03:00 is outside operating hours",
+    "nobody on site"
+   ],
+   "prediction": {
+    "safe": false,
+    "violations": [
+     {
+      "code": "CHLORINE_HIGH",
+      "minutes_until": 108.83333333333333,
+      "value": 4.002462152774841,
+      "limit": 4.0,
+      "message": "Chlorine exceeds 4.0 mg/L in about 108.8 plant-minutes",
+      "pre_existing": false,
+      "baseline_minutes_until": null
+     }
+    ]
+   },
+   "station": {
+    "presence": false,
+    "cabinet_open": false,
+    "level_pct": 58.3,
+    "chlorine_mgl": 0.99
+   },
+   "traffic_id": 23
+  },
+  {
+   "id": "evt_0004",
+   "ts": "2026-11-15T05:47:30Z",
+   "src_ip": "127.0.0.1",
+   "function": 5,
+   "kind": "coil",
+   "address": 1,
+   "name": "DOSER_CMD",
+   "old_value": 1,
+   "new_value": 1,
+   "decision": "ALLOW",
+   "reasons": [],
+   "prediction": {
+    "safe": true,
+    "violations": []
+   },
+   "station": {
+    "presence": false,
+    "cabinet_open": false,
+    "level_pct": 58.4,
+    "chlorine_mgl": 0.99
+   },
+   "traffic_id": 27
+  },
+  {
+   "id": "evt_0005",
+   "ts": "2026-11-15T05:48:06Z",
+   "src_ip": "127.0.0.1",
+   "function": 5,
+   "kind": "coil",
+   "address": 2,
+   "name": "AUTO_MODE",
+   "old_value": 1,
+   "new_value": 0,
+   "decision": "HOLD",
+   "reasons": [
+    "PRESSURE_LOSS in 233 min",
+    "03:00 is outside operating hours"
+   ],
+   "prediction": {
+    "safe": false,
+    "violations": [
+     {
+      "code": "PRESSURE_LOSS",
+      "minutes_until": 232.66666666666666,
+      "value": 14.975000000000987,
+      "limit": 15.0,
+      "message": "Tank below 15% pressure proxy at 232.7 plant-minutes",
+      "pre_existing": false,
+      "baseline_minutes_until": null
+     }
+    ]
+   },
+   "station": {
+    "presence": true,
+    "cabinet_open": false,
+    "level_pct": 58.6,
+    "chlorine_mgl": 0.96
+   },
+   "traffic_id": 37
+  },
+  {
+   "id": "evt_0006",
+   "ts": "2026-11-15T05:48:06Z",
+   "src_ip": "127.0.0.1",
+   "function": 5,
+   "kind": "coil",
+   "address": 0,
+   "name": "PUMP_CMD",
+   "old_value": 0,
+   "new_value": 0,
+   "decision": "ALLOW",
+   "reasons": [],
+   "prediction": {
+    "safe": true,
+    "violations": []
+   },
+   "station": {
+    "presence": true,
+    "cabinet_open": false,
+    "level_pct": 58.4,
+    "chlorine_mgl": 0.96
+   },
+   "traffic_id": 39
+  },
+  {
+   "id": "evt_0007",
+   "ts": "2026-11-15T05:49:00Z",
+   "src_ip": "behind-gateway",
+   "function": null,
+   "kind": "register",
+   "address": 1,
+   "name": "LEVEL_HIGH_SP",
+   "old_value": 840,
+   "new_value": 990,
+   "decision": "DENY",
+   "reasons": [
+    "LOGIC_TAMPER: LEVEL_HIGH_SP 840 -> 990 without a command through the gateway",
+    "station LOGIC_HASH 27697, last known good 26055"
+   ],
+   "prediction": null,
+   "station": {
+    "presence": true,
+    "cabinet_open": false,
+    "level_pct": 48.2,
+    "chlorine_mgl": 0.92
+   },
+   "traffic_id": null
+  },
+  {
+   "id": "evt_0008",
+   "ts": "2026-11-15T05:52:39Z",
+   "src_ip": "127.0.0.1",
+   "function": 6,
+   "kind": "register",
+   "address": 0,
+   "name": "DOSER_RATE_PCT",
+   "old_value": 10,
+   "new_value": 40,
+   "decision": "HOLD",
+   "reasons": [
+    "DOSER_RATE_PCT 10 -> 40 is a large step (over 25): needs operator approval",
+    "03:00 is outside operating hours"
+   ],
+   "prediction": {
+    "safe": true,
+    "violations": []
+   },
+   "station": {
+    "presence": true,
+    "cabinet_open": true,
+    "level_pct": 44.0,
+    "chlorine_mgl": 0.85
+   },
+   "traffic_id": 61
+  },
+  {
+   "id": "evt_0009",
+   "ts": "2026-11-15T05:54:56Z",
+   "src_ip": "127.0.0.1",
+   "function": 6,
+   "kind": "register",
+   "address": 1,
+   "name": "LEVEL_HIGH_SP",
+   "old_value": 840,
+   "new_value": 1000,
+   "decision": "HOLD",
+   "reasons": [
+    "LEVEL_HIGH_SP 1000 is above max 950",
+    "SETPOINT_OUT_OF_RANGE in 0 min",
+    "TANK_OVERFLOW in 199 min",
+    "LEVEL_HIGH_SP 840 -> 1000 is a large step (over 112.5): needs operator approval",
+    "03:00 is outside operating hours"
+   ],
+   "prediction": {
+    "safe": false,
+    "violations": [
+     {
+      "code": "SETPOINT_OUT_OF_RANGE",
+      "minutes_until": 0.0,
+      "value": 100.0,
+      "limit": 95.0,
+      "message": "level_high_sp is 100 %, outside 50\u00e2\u20ac\u201c95 %",
+      "pre_existing": false,
+      "baseline_minutes_until": null
+     },
+     {
+      "code": "TANK_OVERFLOW",
+      "minutes_until": 199.33333333333334,
+      "value": 95.01108333333816,
+      "limit": 95.0,
+      "message": "Tank exceeds the 95% overflow guard in about 199.3 plant-minutes",
+      "pre_existing": false,
+      "baseline_minutes_until": null
+     }
+    ]
+   },
+   "station": {
+    "presence": true,
+    "cabinet_open": false,
+    "level_pct": 46.0,
+    "chlorine_mgl": 1.59
+   },
+   "traffic_id": 169
+  },
+  {
+   "id": "evt_0010",
+   "ts": "2026-11-15T05:54:57Z",
+   "src_ip": "127.0.0.1",
+   "function": 5,
+   "kind": "coil",
+   "address": 0,
+   "name": "PUMP_CMD",
+   "old_value": 1,
+   "new_value": 1,
+   "decision": "ALLOW",
+   "reasons": [],
+   "prediction": {
+    "safe": true,
+    "violations": []
+   },
+   "station": {
+    "presence": true,
+    "cabinet_open": false,
+    "level_pct": 46.0,
+    "chlorine_mgl": 1.59
+   },
+   "traffic_id": 173
+  }
+ ],
+ "agent_log": [
+  {
+   "ts": "2026-11-15T05:47:30.062Z",
+   "event_id": "evt_0003",
+   "kind": "status",
+   "text": "Incident opened for evt_0003 (HOLD)"
+  },
+  {
+   "ts": "2026-11-15T05:47:30.117Z",
+   "event_id": "evt_0003",
+   "kind": "action",
+   "text": "Station alarm raised (buzzer + red LED): held command would cause CHLORINE_HIGH"
+  },
+  {
+   "ts": "2026-11-15T05:47:49.368Z",
+   "event_id": "evt_0003",
+   "kind": "text",
+   "text": "evt_0003: Unidentified local source tried to raise chlorine doser 10% to 100% at 05:47 UTC, nobody on site. Physics: chlorine passes 4.0 mg/L in about 110 min, peak near 6.1. Gateway held it; nothing changed, plant safe. Not released. Recommend BLOCK. Reply BLOCK or ALLOW"
+  },
+  {
+   "ts": "2026-11-15T05:47:53.866Z",
+   "event_id": "evt_0003",
+   "kind": "verdict",
+   "text": "**Verdict: evt_0003 is a held, unsafe write from an unidentified source. Classification: MALICIOUS or unauthorised (not mistaken). Confidence: moderate.**\n\n**Evidence**\n- **evt_0003:** FC6 wrote DOSER_RATE_PCT 10\u00e2\u2020\u2019100 (traffic #23). The gateway held it. Reasons: CHLORINE_HIGH in 109 min, a step over 25, 03:00 outside hours, nobody on site.\n- **Physics (evt_0003 and my run):** chlorine goes from 0.99 to above 4.0 mg/L in about 109 min, peaking near 6.1 mg/L. Level stays under the 84% high setpoint (max ~75.6%). The command is unsafe.\n- **Station (read_station):** PRESENCE false, CABINET_OPEN false, DOSER_RATE_PCT still 10, CHLORINE_MGL 0.98. Nothing changed.\n- **Traffic (#23\u00e2\u20ac\u201c#30):** the write came from 127.0.0.1, the same source as the normal poll loop, so the origin is a local process or console, not a named operator. Traffic #15\u00e2\u20ac\u201c#17 shows a register-setpoint write and coil writes arriving just before it. Traffic #27 (coil 1, ON) passed the gateway after the hold. Doser was already running, so it changed nothing, but it should be checked.\n\n**Why not MISTAKEN or LEGITIMATE:** nobody on site, the cabinet is closed, it is 03:00, the step is 10x, and the source is unidentified.\n\n**Actions**\n- Held command not released. It is unsafe, so I refused to release it even under pressure.\n- No source blocked. 127.0.0.1 also carries the gateway's own polling, so blocking it would cut off the station.\n- No safe mode. The plant is safe and the write never landed.\n- Operator texted once, recommending BLOCK. Awaiting reply."
+  },
+  {
+   "ts": "2026-11-15T05:47:53.873Z",
+   "event_id": "evt_0003",
+   "kind": "cost",
+   "text": "4 model calls, 45687 in / 3251 out tokens, $0.0062 this run, $0.0105 total (ceiling $5.00)"
+  },
+  {
+   "ts": "2026-11-15T05:48:06.056Z",
+   "event_id": "evt_0005",
+   "kind": "status",
+   "text": "Incident opened for evt_0005 (HOLD)"
+  },
+  {
+   "ts": "2026-11-15T05:48:06.111Z",
+   "event_id": "evt_0005",
+   "kind": "action",
+   "text": "Station alarm raised (buzzer + red LED): held command would cause PRESSURE_LOSS"
+  },
+  {
+   "ts": "2026-11-15T05:48:18.841Z",
+   "event_id": "evt_0005",
+   "kind": "text",
+   "text": "Held at 05:48 UTC: someone tried to turn OFF AUTO_MODE (local-loopback client, off-hours). If forwarded, tank would drop from 58% to about 7% in about 230 min, pressure loss. Nothing reached the station; plant is safe, pump and doser unchanged. Presence on site, cabinet closed. I recommend BLOCK. Reply BLOCK or ALLOW."
+  },
+  {
+   "ts": "2026-11-15T05:48:22.877Z",
+   "event_id": "evt_0005",
+   "kind": "verdict",
+   "text": "**Verdict on evt_0005: not malicious as far as the evidence shows, but the command was unsafe and should stay blocked. Confidence: medium.**\n\n**Evidence**\n- **evt_0005 / traffic #37:** Coil 2 (AUTO_MODE) written 1\u00e2\u2020\u20190 at 05:48:06 UTC. The gateway answered with exception 0x06 (traffic #38), so it never reached the station.\n- **Physics:** AUTO_MODE=0 drives the tank from 58% to 7.4% in about 270 min. PRESSURE_LOSS (<15%) hits at 229.5 min, and the violation is new, not pre-existing.\n- **Station now:** AUTO_MODE is still on, the doser is on, the pump is off, and the tank is at 58%. Presence is true and the cabinet is closed, so someone was on site.\n- **Burst from the same client (traffic #7\u00e2\u20ac\u201c#39, about 40 s):** the doser rate 100% write was rejected (#23/#24), the doser and pump coils were switched, and the pump was stopped at 05:48:06 (#39, accepted). These accepted writes are not in evt_0005 and need a check with the operator.\n- **Source:** every frame is from 127.0.0.1, so the gateway cannot tell which device or person sent them.\n- **Timing:** the event says \"03:00 outside operating hours\" but the timestamp is 05:48Z. The operator's local timezone probably explains this; I did not verify it.\n\n**Actions:** None on the station. I did not block 127.0.0.1 because that would cut off the gateway's own loopback path. I texted the operator once and recommended BLOCK. The physics model says releasing this command is unsafe, so I would not release it even if asked."
+  },
+  {
+   "ts": "2026-11-15T05:48:22.882Z",
+   "event_id": "evt_0005",
+   "kind": "cost",
+   "text": "3 model calls, 42547 in / 2914 out tokens, $0.0057 this run, $0.0162 total (ceiling $5.00)"
+  },
+  {
+   "ts": "2026-11-15T05:49:00.175Z",
+   "event_id": "evt_0007",
+   "kind": "status",
+   "text": "Incident opened for evt_0007 (DENY)"
+  },
+  {
+   "ts": "2026-11-15T05:49:00.221Z",
+   "event_id": "evt_0007",
+   "kind": "action",
+   "text": "Station alarm raised (buzzer + red LED): settings changed behind the gateway"
+  },
+  {
+   "ts": "2026-11-15T05:49:11.260Z",
+   "event_id": "evt_0007",
+   "kind": "text",
+   "text": "Tank high-level setpoint was changed on the controller from 84% to 99% with no gateway command. Left alone, the tank could overfill. I reverted it to 84% and confirmed the station matches the last good copy. Someone reached the controller directly, so please check the panel. Reply BLOCK or ALLOW."
+  },
+  {
+   "ts": "2026-11-15T05:49:14.821Z",
+   "event_id": "evt_0007",
+   "kind": "verdict",
+   "text": "**Verdict: evt_0007 is a LOGIC_TAMPER, classified as MALICIOUS or unauthorized direct controller access. Confidence: high.**\n\n**Evidence:**\n- **evt_0007:** LEVEL_HIGH_SP changed 840 \u00e2\u2020\u2019 990 with no gateway command. Decision was DENY, with reason LOGIC_TAMPER.\n- **diff_logic_baseline (before revert):** LEVEL_HIGH_SP was the only changed register. Logic hash was 27697 against a last-known-good of 26055.\n- **get_recent_traffic:** No client write to holding register 1 appears in the last 30 minutes (rows #15\u00e2\u20ac\u201c#44). Only gateway polling from 127.0.0.1 is visible, so the change bypassed the gateway.\n- **read_station:** Presence true, cabinet closed, tank 48.1%, so the change was not from a visible local action.\n\n**Actions:**\n1. Reverted with revert_to_last_known_good. Re-check shows LEVEL_HIGH_SP = 840, all registers match baseline, and the hash is back to 26055. The revert held, so no safe mode was needed.\n2. Sent one operator text (297 characters). I have not received a reply.\n\n**Impact:** The high-level trip would have moved from 84% to 99%, so the tank could have overfilled. The tank was at 48%, so there was no immediate overflow.\n\n**Open item:** The path used to reach the controller is unknown. Someone should check the controller's local and network access."
+  },
+  {
+   "ts": "2026-11-15T05:49:14.828Z",
+   "event_id": "evt_0007",
+   "kind": "cost",
+   "text": "6 model calls, 66195 in / 1705 out tokens, $0.0075 this run, $0.0237 total (ceiling $5.00)"
+  },
+  {
+   "ts": "2026-11-15T05:52:39.542Z",
+   "event_id": "evt_0008",
+   "kind": "status",
+   "text": "Incident opened for evt_0008 (HOLD)"
+  },
+  {
+   "ts": "2026-11-15T05:52:54.474Z",
+   "event_id": "evt_0008",
+   "kind": "text",
+   "text": "evt_0008: Doser rate change 10% to 40% from the local console (on site, cabinet open) was held by the gateway. Model says no limit is broken: tank 44% to about 73% and chlorine 0.85 to about 2.7 mg/L over 4.5 h. Nothing changed on the station and settings match baseline. Reply BLOCK or ALLOW."
+  },
+  {
+   "ts": "2026-11-15T05:52:56.219Z",
+   "event_id": "evt_0008",
+   "kind": "cost",
+   "text": "4 model calls, 55172 in / 3011 out tokens, $0.0070 this run, $0.0307 total (ceiling $5.00)"
+  },
+  {
+   "ts": "2026-11-15T05:53:28.819Z",
+   "event_id": "evt_0008",
+   "kind": "reply",
+   "text": "Operator replied ALLOW"
+  },
+  {
+   "ts": "2026-11-15T05:53:29.143Z",
+   "event_id": "evt_0008",
+   "kind": "released",
+   "text": "Held command forwarded to the station"
+  },
+  {
+   "ts": "2026-11-15T05:53:35.913Z",
+   "event_id": "evt_0008",
+   "kind": "verdict",
+   "text": "**Verdict: MISTAKEN or LEGITIMATE, not malicious. Confidence: moderate.** I did not block anything.\n\n**Evidence**\n- **evt_0008**: a single FC6 write, DOSER_RATE_PCT 10 to 40 (+30), held by the gateway as a large step. Source is 127.0.0.1, the local console. Presence and cabinet-open were both true.\n- **Traffic #61**: the only write in the window. The earlier traffic (#29\u00e2\u20ac\u201c#58) is routine polling, except #37, a denied AUTO_MODE write (coil 2), and #39, an accepted PUMP_CMD off (coil 0) at 05:48. I could not see what cleared PUMP_CMD, so I can't rule out a second actor behind the gateway. The baseline check was clean and the station recovered, so I did not act on it.\n- **Physics**: safe over 270 min, no violations. Level 44% to about 73%, chlorine 0.85 to about 2.7 mg/L at the end of the horizon.\n- **Baseline**: matched before and after the change.\n- **Timing**: the gateway reason cites \"03:00\", but the event is stamped 05:52Z. I could not reconcile this and did not rely on it.\n\n**Actions**\n- Texted the operator once (BLOCK/ALLOW).\n- Released the held command, which the gateway allowed only after operator approval. Station now reads DOSER_RATE_PCT 40.\n\n**Open item:** someone should confirm the 05:48 PUMP_CMD change and the denied AUTO_MODE write with whoever was at the console."
+  },
+  {
+   "ts": "2026-11-15T05:53:35.932Z",
+   "event_id": "evt_0008",
+   "kind": "report",
+   "text": "Incident report written for evt_0008."
+  },
+  {
+   "ts": "2026-11-15T05:53:35.934Z",
+   "event_id": "evt_0008",
+   "kind": "cost",
+   "text": "3 model calls, 62022 in / 917 out tokens, $0.0067 this run, $0.0374 total (ceiling $5.00)"
+  },
+  {
+   "ts": "2026-11-15T05:54:56.912Z",
+   "event_id": "evt_0009",
+   "kind": "status",
+   "text": "Incident opened for evt_0009 (HOLD)"
+  },
+  {
+   "ts": "2026-11-15T05:54:56.947Z",
+   "event_id": "evt_0009",
+   "kind": "action",
+   "text": "Station alarm raised (buzzer + red LED): held command would cause SETPOINT_OUT_OF_RANGE, TANK_OVERFLOW"
+  },
+  {
+   "ts": "2026-11-15T05:55:15.485Z",
+   "event_id": "evt_0009",
+   "kind": "text",
+   "text": "Held 03:54: write raised tank high-level setpoint 84% to 100%. Overflow in ~196 min. Nothing reached station; level 46.8%, plant safe. Came from gateway host (127.0.0.1), cabinet closed. Not released; I did not block that source (it is the gateway's own link). Reply BLOCK or ALLOW."
+  },
+  {
+   "ts": "2026-11-15T05:55:19.359Z",
+   "event_id": "evt_0009",
+   "kind": "verdict",
+   "text": "**Verdict on evt_0009: not safe to release; the write stays held. Classification: MISTAKEN or unexplained (not confirmed malicious). Confidence: moderate.**\n\n**Evidence**\n- **evt_0009 (HOLD):** FC6 wrote LEVEL_HIGH_SP 840\u00e2\u2020\u20191000 (84%\u00e2\u2020\u2019100%). Gateway reasons: above max 950, large step, 03:00 outside hours.\n- **Physics (run_physics and evt_0009 prediction):** Setpoint out of range immediately. Tank reaches the 95% overflow guard in about 196\u00e2\u20ac\u201c199 min and trends to ~100%.\n- **Traffic #169 \u00e2\u2020\u2019 #170:** The write was refused with exception 0x06. Traffic #172 shows the station still at 840, so it never landed.\n- **Source:** All traffic (#125\u00e2\u20ac\u201c#174) is from 127.0.0.1, the gateway host itself. This could be the gateway's own poller, a local process, or someone logged in there. I cannot tell which from the data.\n- **Station (read_station):** Presence true, cabinet closed. Level 46.8%, chlorine 1.63 mg/L. Pump and doser running.\n- **Baseline (diff_logic_baseline):** No change to any setting. LOGIC_HASH matches last known good. No tamper.\n- **Unexplained:** Traffic #173 was an FC5 write to coil 0 (ON). It was accepted (#174). I could not map coil 0 to a name, so I cannot say whether it changed anything. Also, DOSER_RATE went 10\u00e2\u2020\u201940 at #162, but it matches last known good, so it was an allowed change.\n\n**Actions**\n- Did not release the command. The physics model says it is unsafe.\n- Did not block 127.0.0.1. It is the gateway's own link, and blocking it would cut the poller.\n- Texted the operator once (BLOCK or ALLOW). I recommend BLOCK, meaning keep it rejected."
+  },
+  {
+   "ts": "2026-11-15T05:55:19.365Z",
+   "event_id": "evt_0009",
+   "kind": "cost",
+   "text": "5 model calls, 83721 in / 3258 out tokens, $0.0100 this run, $0.0474 total (ceiling $5.00)"
+  }
+ ],
+ "state_after": {
+  "coils": {
+   "PUMP_CMD": 1,
+   "DOSER_CMD": 1,
+   "AUTO_MODE": 1,
+   "SAFE_MODE": 0,
+   "ALARM": 1
+  },
+  "discrete_inputs": {
+   "PRESENCE": 1,
+   "CABINET_OPEN": 0,
+   "LOCAL_BUTTON": 0,
+   "HIGH_LEVEL_SWITCH": 0,
+   "PUMP_RUNNING": 1,
+   "DOSER_RUNNING": 1
+  },
+  "input_registers": {
+   "DEMAND_PCT": 24,
+   "CABINET_TEMP_C": 0,
+   "CABINET_HUMIDITY": 0,
+   "LOGIC_HASH": 50247,
+   "UPTIME_S": 544
+  },
+  "holding": {
+   "DOSER_RATE_PCT": 40,
+   "LEVEL_HIGH_SP": 840,
+   "LEVEL_LOW_SP": 400,
+   "CHLORINE_TARGET": 100,
+   "LOGIC_VERSION": 1,
+   "TANK_LEVEL_PCT": 610,
+   "CHLORINE_MGL": 211
+  },
+  "connected": true,
+  "ts": 1794722158.8371782,
+  "station": {
+   "presence": true,
+   "cabinet_open": false,
+   "level_pct": 61.0,
+   "chlorine_mgl": 2.11
+  }
+ }
+}

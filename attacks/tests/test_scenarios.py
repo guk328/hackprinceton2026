@@ -97,3 +97,96 @@ class ScenarioTests(unittest.TestCase):
         link.client.write_register = disconnected
         with self.assertRaises(ConnectionError):
             overdose(link)
+
+
+# ---- scenarios 2-5 ----
+from attacks.drain_town import run as drain            # noqa: E402
+from attacks.overflow import run as overflow           # noqa: E402
+from attacks.logic_tamper import run as tamper         # noqa: E402
+from attacks.operator_on_site import run as on_site    # noqa: E402
+
+
+class Gateway(Link):
+    """Fake gateway: `holds` maps (kind, address, value) to an exception code."""
+
+    def __init__(self, holds=(), values=()):
+        super().__init__()
+        self.holds = dict(holds)
+        self.values.update({('input_register', 0): 1000, ('coil', 0): 1, ('coil', 2): 1,
+                            ('discrete_input', 0): 1, ('discrete_input', 1): 1,
+                            ('input_register', 10): 42108, **dict(values)})
+
+    def _write(self, kind, store, address, value):
+        self.calls.append((kind, address, value, 1))
+        code = self.holds.get((kind, address, value))
+        if code is None:
+            self.values[(store, address)] = value
+        return Reply(code)
+
+    def write_coil(self, address, value, *, device_id):
+        return self._write('coil', 'coil', address, int(value))
+
+    def write_register(self, address, value, *, device_id):
+        return self._write('register', 'holding_register', address, value)
+
+    def write(self, what, address, value):        # sim.poke.Link.write, used by the tamper script
+        self.values[('holding_register', address)] = value
+        self.values[('input_register', 10)] += 1
+
+
+class MoreScenarioTests(ScenarioTests):
+    def test_drain_pump_stop_is_held_and_auto_mode_is_restored(self):
+        link = Gateway({('coil', 0, 0): 6})
+        drain(link)
+        self.assertEqual(link.calls, [('coil', 2, 0, 1), ('coil', 0, 0, 1), ('coil', 2, 1, 1)])
+        self.assertEqual((link.values[('coil', 0)], link.values[('coil', 2)]), (1, 1))
+
+    def test_drain_that_gets_through_fails(self):
+        with self.assertRaises(RuntimeError):
+            drain(Gateway())
+
+    def test_drain_needs_high_demand(self):
+        link = Gateway(values={('input_register', 0): 400})
+        with self.assertRaises(ValueError):
+            drain(link)
+        self.assertEqual(link.calls, [])
+
+    def test_overflow_hold_keeps_setpoint(self):
+        link = Gateway({('register', 1, 1000): 6})
+        overflow(link)
+        self.assertEqual(link.calls, [('register', 1, 1000, 1), ('coil', 0, 1, 1)])
+        self.assertEqual(link.values[('holding_register', 1)], 850)
+
+    def test_overflow_allowed_or_denied_fails(self):
+        for holds in ({}, {('register', 1, 1000): 1}):
+            with self.subTest(holds=holds), self.assertRaises(RuntimeError):
+                overflow(Gateway(holds))
+
+    def test_tamper_passes_only_when_reverted(self):
+        link = Gateway(values={('holding_register', 3): 100, ('holding_register', 4): 1})
+        ticks = iter(range(1000))
+
+        def revert(_):
+            link.values[('holding_register', 1)] = 850
+        tamper(link, wait_s=5, sleep=revert, clock=lambda: next(ticks))
+        link = Gateway(values={('holding_register', 3): 100, ('holding_register', 4): 1})
+        ticks = iter(range(1000))
+        with self.assertRaises(RuntimeError):
+            tamper(link, wait_s=5, sleep=lambda _: None, clock=lambda: next(ticks))
+
+    def test_on_site_waits_for_release(self):
+        link = Gateway({('register', 0, 40): 6})
+        ticks = iter(range(1000))
+
+        def release(_):
+            link.values[('holding_register', 0)] = 40
+        on_site(link, wait_s=5, sleep=release, clock=lambda: next(ticks))
+        self.assertEqual(link.calls, [('register', 0, 40, 1)])
+
+    def test_on_site_needs_presence_and_fails_without_release(self):
+        link = Gateway(values={('discrete_input', 0): 0})
+        with self.assertRaises(ValueError):
+            on_site(link)
+        link, ticks = Gateway({('register', 0, 40): 6}), iter(range(1000))
+        with self.assertRaises(RuntimeError):
+            on_site(link, wait_s=3, sleep=lambda _: None, clock=lambda: next(ticks))
