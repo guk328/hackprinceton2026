@@ -10,7 +10,8 @@ coil/register in the frame; otherwise nothing is sent to the station.
 
 One write is judged at a time, against station state read just before, and the
 next one waits for the station's answer to it. One upstream connection per
-client. Unparseable bytes close that client only. If the station is down the
+client. Unparseable bytes close that client only; a write frame that does not
+decode is first stored (traffic row and DENY event) and answered with 0x01. If the station is down the
 client gets Modbus exception 0x0B and the next client retries. A source on the
 blocklist is disconnected before anything it sends is parsed.
 
@@ -299,7 +300,12 @@ class Proxy:
                     log.warning("%s is blocked, connection dropped", src)
                     return
                 for frame in buf.feed(data):
-                    writes = decode_write(frame, src, self.regs) if frame.fc in WRITE_FCS else None
+                    try:
+                        writes = decode_write(frame, src, self.regs) if frame.fc in WRITE_FCS else None
+                    except FrameError as e:      # a write we cannot read: on record, refused, closed
+                        self._malformed(src, c_writer, frame, e)
+                        await c_writer.drain()
+                        return
                     frame_row = self._record(src, C2S, frame, writes=writes)
                     if relay is None or relay.done():      # station down
                         self._reply_exception(src, c_writer, frame, EXC_TARGET_FAILED)
@@ -339,6 +345,16 @@ class Proxy:
             for w in (s_writer, c_writer):
                 if w:
                     w.close()
+
+    def _malformed(self, src, c_writer, frame: Frame, error: FrameError):
+        """A write frame that does not decode: one traffic row with its raw bytes, one DENY
+        event that cites it (so the runner opens an incident), exception 0x01 to the sender.
+        Nothing is forwarded and the caller closes the connection."""
+        log.warning("%s malformed write frame, closing client: %s", src, error)
+        frame_row = self._record(src, C2S, frame)
+        d = Decision(DENY, [f"malformed write frame: {error}"])
+        self._save_event(src, frame.fc, None, d, DENY, self.poller.snapshot, frame_row)
+        self._reply_exception(src, c_writer, frame, EXC_DENY)
 
     async def _relay(self, src, s_reader, c_writer, pending):
         """Station -> client. When the station drops, answer what is still

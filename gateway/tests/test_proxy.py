@@ -121,7 +121,8 @@ def test_garbage_frame_closes_that_client_only(station, proxy):
 def test_malformed_write_closes_client(station, proxy):
     with socket.create_connection((HOST, proxy.port), timeout=3) as s:
         s.sendall(struct.pack(">HHHBBHH", 1, 0, 6, 1, 5, 0, 0x1234))  # FC5 value not FF00/0000
-        assert recv_frame(s) == b""
+        assert recv_frame(s)[7:] == bytes([0x85, 0x01])               # refused, then closed
+        assert s.recv(16) == b""
     assert poke.read_all(HOST, station.port)[("coil", 0)] == 0
     poke.read_all(HOST, proxy.port)
 

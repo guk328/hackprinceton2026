@@ -259,3 +259,23 @@ def test_storage_failure_does_not_change_enforcement(station):
         assert on_station(station, RATE) == 10
     finally:
         r.close()
+
+
+def test_malformed_write_frame_is_stored_as_traffic_and_a_deny_event(station, rig, store):
+    """Review finding 10: a write frame that did not decode closed the connection and left
+    nothing in the database."""
+    import socket
+    import struct
+    from gateway.proxy import EXC_DENY
+    from test_proxy import recv_frame
+    bad = struct.pack(">BHHB", 16, RATE, 2, 4) + struct.pack(">H", 100)   # says 2 registers, carries 1
+    with socket.create_connection((HOST, rig.proxy.port), timeout=5) as s:
+        s.sendall(adu(bad, tid=9))
+        assert recv_frame(s)[7:] == bytes([0x90, EXC_DENY])
+        assert s.recv(16) == b""                                  # then the gateway closes
+    (e,) = store.list_events()
+    assert e["decision"] == "DENY" and e["src_ip"] == HOST and e["function"] == 16
+    assert e["reasons"][0].startswith("malformed write frame: fc 16: byte count")
+    rows = store.query_traffic()
+    assert rows[0]["id"] == e["traffic_id"] and rows[0]["raw"] == adu(bad, tid=9).hex()
+    assert on_station(station, RATE) == 10
