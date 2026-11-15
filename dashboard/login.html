@@ -4,54 +4,55 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Backflow</title>
-<link rel="stylesheet" href="site.css?v=4">
+<link rel="stylesheet" href="app.css?v=8">
 <link rel="icon" href="data:,">
 </head>
-<body>
-<header class="bar">
-  <a class="name" href="index.html">Backflow</a>
-  <span class="where">Operator sign-in</span>
-</header>
-<main class="login-wrap">
-  <form class="login-box" id="form">
-    <h1>Operator sign-in</h1>
-    <p class="muted">Demo login for the hackathon build.</p>
-    <label for="user">Account</label>
-    <input id="user" value="operator" readonly aria-describedby="user-note">
+<body class="signin">
+<aside class="pitch">
+  <a class="brand" href="index.html" aria-label="Backflow home">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.2C12 2.2 4.8 10 4.8 14.8a7.2 7.2 0 0 0 14.4 0C19.2 10 12 2.2 12 2.2z" fill="currentColor"/><path d="M8.6 14.6l2.4 2.4 4.4-5" fill="none" stroke="#0a5fb4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Backflow
+  </a>
+  <div>
+    <h1>Every command, checked against physics before it runs.</h1>
+    <p>The safety gateway between remote access and your pump controller.</p>
+  </div>
+  <div class="glass mini" aria-hidden="true">
+    <div class="row"><span class="badge HOLD"><svg viewBox="0 0 16 16"><path d="M5 2.5v11M11 2.5v11" fill="none" stroke="currentColor" stroke-width="3.2"/></svg>HOLD</span> Doser rate 10 % → 100 %</div>
+    <div class="why">Chlorine reaches 4 mg/L in 88 min</div>
+    <div class="foot">Held by the gateway. It never reached the station.</div>
+  </div>
+</aside>
+<main class="formside">
+  <form class="form" id="form">
+    <h2>Sign in</h2>
+    <p>Operator console · Pump station 1</p>
+    <label for="user">Username</label>
+    <input id="user" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
     <label for="pw">Password</label>
-    <input id="pw" type="password" autocomplete="current-password" required autofocus>
+    <input id="pw" name="password" type="password" autocomplete="current-password" required>
     <button type="submit">Sign in</button>
     <div class="err" id="err" role="alert"></div>
-    <p><a href="console.html?mode=replay">Watch the recorded run instead (no sign-in)</a></p>
+    <p class="alt"><a href="console.html?mode=replay">Watch a recorded incident instead</a></p>
   </form>
-  <div class="notice" id="user-note">
-    <b>What this login is, and is not</b>
-    <ul>
-        <li>One shared operator account. There are no separate users or roles.</li>
-        <li>It guards the operator actions: reading the operator's messages, Approve and Reject, and the demo reset. The command feed and plant values are readable without it.</li>
-        <li>The session is a signed cookie that lasts 12 hours and ends when the gateway restarts. Wrong passwords are rate-limited.</li>
-        <li>The demo runs over plain HTTP on a local hotspot. A real deployment needs TLS and per-person accounts. We have not built those.</li>
-      </ul>
-  </div>
 </main>
 <script>
 "use strict";
 (async () => {
-  const next = "console.html";
-  const err = document.getElementById("err"), pw = document.getElementById("pw");
+  const err = document.getElementById("err"), pw = document.getElementById("pw"), user = document.getElementById("user");
   try {
     const me = await (await fetch("/me", { credentials: "same-origin" })).json();
-    if (me.admin === true) location.replace(next);
-  } catch (e) { err.textContent = "The gateway is not reachable. The recorded run still works."; }
+    if (me.admin === true) location.replace("console.html");
+  } catch (e) { err.textContent = "The gateway is not reachable. The recorded incident still plays."; }
   document.getElementById("form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     err.textContent = "";
     try {
-      const r = await fetch("/login", { method: "POST", credentials: "same-origin",
-        headers: { "content-type": "application/json" }, body: JSON.stringify({ password: pw.value }) });
+      const r = await fetch("/login", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username: user.value.trim(), password: pw.value }) });
       pw.value = "";
-      if (r.ok) location.replace(next);
-      else err.textContent = r.status === 429 ? "Too many attempts. Wait a minute." : "Wrong password.";
+      if (r.ok) location.replace("console.html");
+      else err.textContent = r.status === 429 ? "Too many attempts. Wait a minute." : "Wrong username or password.";
     } catch (e) { err.textContent = "The gateway is not reachable."; }
   });
 })();

@@ -3,25 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backflow operator console</title>
-<link rel="stylesheet" href="site.css?v=4">
+<title>Backflow console · Pump station 1</title>
+<link rel="stylesheet" href="app.css?v=8">
 <link rel="icon" href="data:,">
 </head>
 <body class="console">
-<header class="bar">
-  <a class="name" href="index.html">Backflow</a>
-  <span class="where">Operator console · Pump station 1</span>
-  <span class="grow"></span>
-  <span id="who" class="muted" hidden>Signed in as operator (demo login)</span>
-  <button id="reset" class="quiet small" hidden>Reset demo</button>
-  <button id="logout" class="quiet small" hidden>Sign out</button>
-</header>
-
-<div id="modebar" class="modebar live" role="status">
-  <span class="tag" id="mode-tag">LIVE</span>
-  <span id="mode-text">Connecting to the gateway…</span>
-  <span class="grow"></span>
-  <span id="player" hidden>
+<header class="top" id="top">
+  <a class="brand" href="index.html" aria-label="Backflow home">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.2C12 2.2 4.8 10 4.8 14.8a7.2 7.2 0 0 0 14.4 0C19.2 10 12 2.2 12 2.2z" fill="currentColor"/><path d="M8.6 14.6l2.4 2.4 4.4-5" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Backflow
+  </a>
+  <span class="where">Pump station 1</span>
+  <span class="mode-pill" id="mode-pill"><i></i><b id="mode-tag">LIVE</b></span>
+  <span class="mode-text" id="mode-text" role="status">Connecting to the gateway…</span>
+  <span id="player" class="player" hidden>
     <button id="pl-toggle">Pause</button>
     <button id="pl-restart">Restart</button>
     <button class="pl-speed" data-x="1" aria-pressed="true">1×</button>
@@ -29,66 +24,110 @@
     <button class="pl-speed" data-x="4" aria-pressed="false">4×</button>
     <progress id="pl-bar" max="1" value="0"></progress>
   </span>
-  <a id="mode-switch" href="console.html?mode=replay">Switch to recorded replay</a>
-</div>
+  <span class="link" id="link"><i></i><span id="link-text">Station link</span></span>
+  <a id="mode-switch" class="tbtn" href="console.html?mode=replay">Recorded replay</a>
+  <button id="reset" class="tbtn" hidden>Reset demo</button>
+  <button id="logout" class="tbtn" hidden>Sign out</button>
+</header>
 
-<section class="plant" id="plant" aria-label="Plant now">
-  <div class="tile tank">
-    <div class="gauge" aria-hidden="true"><div class="fill" id="tank-fill"></div><div class="sp" id="tank-hi"></div><div class="sp" id="tank-lo"></div></div>
-    <div><div class="l">Tank level</div><div class="v" id="tank-v">–</div><div class="s" id="tank-s">waiting for the station</div></div>
+<main class="grid">
+  <div class="col">
+    <section class="card station" id="station" aria-label="Station">
+      <h2>Station <span class="chips"><span class="chip" id="chip-mode">MODE</span><span class="chip" id="chip-alarm">ALARM OFF</span></span></h2>
+      <svg id="rig" viewBox="0 0 340 196" role="img" aria-label="Station schematic: pump, doser, tank, town and alarm">
+        <defs><clipPath id="tank-clip"><rect x="130" y="26" width="100" height="140" rx="9"/></clipPath></defs>
+        <path class="pipe" d="M60 146H132"/><path class="flow" id="flow-in" d="M60 146H132"/>
+        <path class="pipe" d="M96 102V146"/><path class="flow dose" id="flow-dose" d="M96 102V146"/>
+        <path class="pipe" d="M228 146H300"/><path class="flow" id="flow-out" d="M228 146H300"/>
+        <rect class="tank-body" x="130" y="26" width="100" height="140" rx="9"/>
+        <g clip-path="url(#tank-clip)"><g id="water" transform="translate(0,96)">
+          <path class="wave" d="M80 0q12.5-5 25 0t25 0 25 0 25 0 25 0 25 0 25 0 25 0V170H80z"/>
+        </g></g>
+        <rect class="tank-rim" x="130" y="26" width="100" height="140" rx="9"/>
+        <line class="sp" id="sp-hi" x1="124" x2="236" y1="48" y2="48"/><line class="sp" id="sp-lo" x1="124" x2="236" y1="110" y2="110"/>
+        <text class="rig-l" x="180" y="17" text-anchor="middle">TANK</text>
+        <g id="g-pump" class="dev">
+          <circle class="body" cx="42" cy="146" r="19"/>
+          <g class="impeller"><path d="M42 146l0-13a6 6 0 0 1 6 6zM42 146l11.3 6.5a6 6 0 0 1-8.2 2.2zM42 146l-11.3 6.5a6 6 0 0 1 2.2-8.2z"/></g>
+          <text class="rig-l" x="42" y="184" text-anchor="middle">PUMP · K1</text>
+        </g>
+        <g id="g-doser" class="dev">
+          <rect class="body" x="80" y="68" width="32" height="34" rx="6"/>
+          <text class="rig-cl" x="96" y="91" text-anchor="middle">Cl</text>
+          <text class="rig-l" x="96" y="58" text-anchor="middle">DOSER · K2</text>
+        </g>
+        <g class="town"><path d="M300 146v-20l14-12 14 12v20z"/><text class="rig-l" x="314" y="184" text-anchor="middle">TOWN</text></g>
+        <g id="g-alarm" class="dev alarm">
+          <circle class="ring" cx="304" cy="42" r="13"/><circle class="ring r2" cx="304" cy="42" r="13"/>
+          <circle class="body" cx="304" cy="42" r="13"/>
+          <path class="bell" d="M304 35v8M304 47.5v.5"/>
+          <text class="rig-l" x="304" y="74" text-anchor="middle">ALARM LED</text>
+        </g>
+      </svg>
+      <div class="reads">
+        <div><span class="l">Tank level</span><span class="v" id="r-level">–</span></div>
+        <div id="read-cl"><span class="l">Chlorine</span><span class="v" id="r-cl">–</span></div>
+        <div><span class="l">Demand</span><span class="v" id="r-demand">–</span></div>
+      </div>
+      <dl class="facts">
+        <div><dt>Pump</dt><dd id="f-pump">–</dd></div>
+        <div><dt>Doser</dt><dd id="f-doser">–</dd></div>
+        <div><dt>On site</dt><dd id="f-site">–</dd></div>
+        <div><dt>Cabinet air</dt><dd id="f-cab">–</dd></div>
+      </dl>
+    </section>
+    <section class="card log" aria-label="Commands">
+      <h2>Commands <span id="feed-count">newest first</span></h2>
+      <div class="scroll">
+        <ul class="feed" id="feed"></ul>
+        <p class="empty" id="feed-empty">No commands yet.</p>
+      </div>
+    </section>
   </div>
-  <div class="tile" id="t-cl"><div class="l">Chlorine</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile" id="t-pump"><div class="l">Pump</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile" id="t-doser"><div class="l">Doser</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile" id="t-mode"><div class="l">Mode</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile" id="t-demand"><div class="l">Town demand</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile" id="t-site"><div class="l">On site</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile" id="t-cab"><div class="l">Cabinet air</div><div class="v">–</div><div class="s"></div></div>
-  <div class="tile health" id="t-health"><div class="l">Station link</div><div class="v">–</div><div class="s"></div></div>
-</section>
 
-<main class="cols">
-  <section class="panel" aria-label="Command feed">
-    <h2>Commands <span id="feed-count">newest first</span></h2>
-    <div class="scroll">
-      <ul class="feed" id="feed"></ul>
-      <p class="empty" id="feed-empty">No commands yet. Every write sent to the gateway appears here with its decision.</p>
+  <section class="card decision" id="decision" aria-label="Selected command">
+    <div class="idle" id="idle">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.2C12 2.2 4.8 10 4.8 14.8a7.2 7.2 0 0 0 14.4 0C19.2 10 12 2.2 12 2.2z" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8.6 14.6l2.4 2.4 4.4-5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <h3>Watching every command</h3>
+      <p>Each write to the station is checked against the physics model before it is forwarded. The first one will appear here.</p>
+    </div>
+    <div class="dc" id="dc" hidden>
+      <ol class="stages" id="stages"></ol>
+      <div class="dc-head"><span id="dc-badge"></span><h3 id="dc-what"></h3></div>
+      <p class="dc-reason" id="dc-reason"></p>
+      <p class="dc-also" id="dc-also"></p>
+      <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
+      <ul class="rigline" id="rigline"></ul>
+      <div class="brief" id="brief"></div>
+      <div class="actions" id="actions"></div>
     </div>
   </section>
 
-  <div class="mid">
-    <section class="panel held" aria-label="Held commands">
-      <h2>Held commands <span id="held-count"></span></h2>
-      <div class="scroll">
-        <div id="held"></div>
-        <p class="empty" id="held-empty">Nothing is waiting for you. A held command was not sent to the station; it appears here for your decision.</p>
-      </div>
-    </section>
-    <section class="panel forecast" aria-label="Forecast">
-      <h2>What the command would do <span id="fc-title">physics model forecast</span></h2>
-      <div class="head"><div class="sub" id="fc-sub">Select a command to see its forecast.</div></div>
-      <div class="chart" id="chart"><div class="tip" id="tip" hidden></div></div>
-    </section>
-  </div>
-
-  <section class="panel" aria-label="Agent activity">
-    <h2>Agent activity <span>what it did and why</span></h2>
+  <section class="card agent" aria-label="Agent">
+    <h2>Agent <span class="phase" id="phase">Idle</span></h2>
     <div class="scroll" id="agent-scroll">
-      <ol class="steps" id="steps"></ol>
-      <p class="empty" id="steps-empty">The agent starts only after a command has been held or denied. It has no part in the allow or hold decision.</p>
+      <ol class="tl" id="tl"></ol>
+      <p class="empty" id="tl-empty">The gateway decides allow or hold on its own, instantly. The agent starts afterwards: it investigates a held command, briefs you, and writes the report.</p>
+    </div>
+    <div class="rails">
+      <div class="can"><b>It can</b>
+        <span class="act" data-act="block">Block a source</span><span class="act" data-act="revert">Revert settings</span><span class="act" data-act="safe">Safe mode</span><span class="act" data-act="report">Write the report</span>
+      </div>
+      <div class="cannot"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="currentColor"/><path d="M5.2 7V5a2.8 2.8 0 0 1 5.6 0v2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <span><b>It cannot</b> send commands to the plant. A release always needs you.</span></div>
     </div>
   </section>
 </main>
 
 <div class="overlay" id="overlay" hidden>
   <div class="box">
-    <h2 id="ov-title">The gateway is not reachable</h2>
-    <p id="ov-text">This page could not reach the gateway API. You can still show the recorded run.</p>
+    <h2>The gateway is not reachable</h2>
+    <p>This page could not reach the gateway. The recorded run still works.</p>
     <p><a class="btn" href="console.html?mode=replay">Open the recorded replay</a> <a class="btn quiet" href="console.html">Try live again</a></p>
   </div>
 </div>
 
-<script src="data.js?v=4"></script>
-<script src="console.js?v=4"></script>
+<script src="data.js?v=8"></script>
+<script src="console.js?v=8"></script>
 </body>
 </html>

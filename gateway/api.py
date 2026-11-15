@@ -6,7 +6,7 @@
     GET  /stream            server-sent events: "event" for every new event (no trajectory),
                             "agent" for every agent step and operator text
     GET  /agent/log         stored agent steps, oldest first, ?limit=200
-    POST /login             {"password": "..."} -> admin cookie (gateway/auth.py); /logout; GET /me
+    POST /login             {"username": "operator", "password": "..."} -> admin cookie (gateway/auth.py); /logout; GET /me
     GET  /operator/inbox    admin: the operator's "phone", texts with their one-time codes
     POST /operator/reply    admin: {"reply": "ALLOW"|"BLOCK", "event_id": "evt_0042",
                             "code": "123456"}; 202 if the code verifies (gateway/notify.py), else 403
@@ -31,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, ConfigDict, Field
 
-from gateway.auth import COOKIE, Auth
+from gateway.auth import COOKIE, USERNAME, Auth
 from gateway.events import EventStore
 
 REPORTS_DIR = Path(__file__).parent / "reports"
@@ -45,6 +45,7 @@ class Strict(BaseModel):
 
 
 class Login(Strict):
+    username: str = Field(USERNAME, max_length=64)      # one account; older clients send the password only
     password: str = Field(min_length=1, max_length=200)
 
 
@@ -73,7 +74,7 @@ def create_app(store: EventStore, poller=None, station_view=None, channel=None,
 
     @app.post("/login")
     def login(body: Login, request: Request, response: Response):
-        auth.login(body.password, request.client.host if request.client else "?", response)
+        auth.login(body.password, request.client.host if request.client else "?", response, username=body.username)
         return {"admin": True}
 
     @app.post("/logout")

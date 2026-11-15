@@ -1,5 +1,8 @@
-// Backflow operator console. Draws what the data source (data.js) reports: plant tiles, command
-// feed, held commands with Approve / Reject, the forecast chart and the agent's steps.
+// Backflow operator console. Draws what the data source (data.js) reports:
+//   left   : the station as a schematic of the rig (tank, pump K1, doser K2, alarm LED) and the command log
+//   centre : the selected command; a held one becomes the hero, with its forecast, the agent's
+//            briefing and Approve / Reject (which post the operator's reply through data.js)
+//   right  : the agent's work as a plain-language timeline, raw tool calls behind an expand
 // Everything from the network is written with textContent, never as HTML.
 "use strict";
 (() => {
@@ -27,7 +30,7 @@
   };
   const mins = (m) => (m < 1 ? "under a minute" : `${Math.round(m)} min`);
 
-  // ------------------------------------------------------------------ words for registers
+  // ------------------------------------------------------------------ words for registers and reasons
   const onOff = (v) => (v ? "ON" : "OFF");
   const REG = {
     PUMP_CMD: ["Supply pump", onOff], DOSER_CMD: ["Chlorine doser", onOff], AUTO_MODE: ["Automatic control", onOff],
@@ -42,14 +45,13 @@
     const [label, f] = REG[e.name] || [e.name || `${e.kind || "function"} ${e.address ?? e.function ?? ""}`, (v) => `${v}`];
     const has = (v) => v !== null && v !== undefined;
     const val = has(e.new_value) ? (has(e.old_value) ? `${f(e.old_value)} → ${f(e.new_value)}` : `→ ${f(e.new_value)}`) : "";
-    return { label, val };
+    return { label, val, f, text: `${label} ${val}`.trim() };
   }
-  // The physics reason in plain words, from the model's own violation record.
+  // The physics reason in plain words, from the model's own violation record. The model words some
+  // violations itself (a crossing after the forecast window); only the "in about N" cases are rephrased.
   function physicsReason(v) {
-    // The model words some violations itself (a crossing after the forecast window, for one).
-    // Only the plain "in about N plant-minutes" cases are rephrased here.
     if (v.message && !/in about/.test(v.message)) return v.message;
-    const n = typeof v.minutes_until === "number" ? ` in ${mins(v.minutes_until)} of plant time` : "";
+    const n = typeof v.minutes_until === "number" ? ` in ${mins(v.minutes_until)}` : "";
     switch (v.code) {
       case "CHLORINE_HIGH": return `Chlorine reaches ${v.limit} mg/L${n}`;
       case "CHLORINE_LOW": return `Chlorine falls below ${v.limit} mg/L${n}`;
@@ -64,32 +66,27 @@
     const phys = violations(e).map(physicsReason);
     const codes = violations(e).map((v) => v.code);
     const rest = (e.reasons || []).filter((r) => !codes.some((c) => String(r).startsWith(c)));
-    let main = phys[0] || rest.shift() || (e.decision === "ALLOW" ? "Within limits" : "");
+    const main = phys[0] || rest.shift() || (e.decision === "ALLOW" ? "Within limits" : "");
     if (phys.length > 1) rest.unshift(...phys.slice(1));
     return { main, rest, physics: phys.length > 0 };
   }
-
-  const ICON = {
-    ALLOW: "M2 8.5 6 12.5 14 3.5", HOLD: "M5 2.5v11M11 2.5v11", DENY: "M3 3l10 10M13 3 3 13" };
-  function badge(decision, word) {
+  const ICON = { ALLOW: "M2 8.5 6 12.5 14 3.5", HOLD: "M5 2.5v11M11 2.5v11", DENY: "M3 3l10 10M13 3 3 13" };
+  function badge(decision, word, size) {
     const d = ICON[decision] ? decision : "DENY";
-    const b = el("span", `badge ${d}`);
+    const b = el("span", `badge ${d}${size ? ` ${size}` : ""}`);
     const s = svg("svg", { viewBox: "0 0 16 16", "aria-hidden": "true" });
     s.append(svg("path", { d: ICON[d], fill: "none", stroke: "currentColor", "stroke-width": d === "HOLD" ? 3.2 : 2.6, "stroke-linecap": "square" }));
     b.append(s, document.createTextNode(word || d));
     return b;
   }
 
-  // ------------------------------------------------------------------ mode bar and session
-  const modebar = $("modebar");
-  function setMode(cls, tag, text) {
-    modebar.className = `modebar ${cls}`;
-    $("mode-tag").textContent = tag;
-    $("mode-text").textContent = text;
-  }
+  // ------------------------------------------------------------------ top bar: mode, session, station link
+  const setModeText = (t) => { $("mode-text").textContent = t; $("mode-text").title = t; };
   if (replay) {
-    document.title = "REPLAY · Backflow operator console";
-    setMode("replay", "REPLAY", "Loading the recording…");
+    document.body.classList.add("replay");
+    document.title = "REPLAY · Backflow console";
+    $("mode-tag").textContent = "REPLAY";
+    setModeText("Loading the recording…");
     $("mode-switch").textContent = "Switch to live";
     $("mode-switch").href = "console.html";
     $("player").hidden = false;
@@ -98,24 +95,23 @@
     document.querySelectorAll(".pl-speed").forEach((b) => b.addEventListener("click", () => source.setSpeed(+b.dataset.x)));
   }
   on("player", (p) => {
-    if (p.missing) { setMode("down", "REPLAY", "No recording found (dashboard/replay/scenario_0_1.js). Record one with tools/record_replay.py."); return; }
-    const m = p.meta;
-    const when = new Date(m.t0 * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
-    setMode("replay", "REPLAY", p.waiting
-      ? `Recorded ${when}. Paused: press ${p.waiting.reply === "BLOCK" ? "Reject" : "Approve"} under Held commands, as the operator did.`
-      : `Recorded ${when} on ${m.station}. Not live: nothing here reaches a station.`);
+    if (p.missing) { setModeText("No recording found. Record one with dashboard/tools/record_replay.py."); return; }
+    const when = new Date(p.meta.t0 * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
+    setModeText(p.waiting ? `Paused. Press ${p.waiting.reply === "BLOCK" ? "Reject" : "Approve"}, as the recorded operator did.`
+      : `Recorded ${when} on ${p.meta.station}. Nothing here reaches a station.`);
     $("pl-toggle").textContent = p.done ? "Play again" : p.playing ? "Pause" : "Play";
     $("pl-bar").value = p.total ? Math.min(1, p.t / p.total) : 0;
     document.querySelectorAll(".pl-speed").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.x === p.speed)));
   });
   on("conn", (c) => {
-    if (c === "live") setMode("live", "LIVE", "Connected to the gateway. Commands and plant values are real-time.");
-    else if (c === "reconnecting") setMode("down", "LIVE", "Lost the gateway stream. Reconnecting…");
+    document.body.classList.toggle("down", c === "reconnecting");
+    if (c === "live") setModeText("Connected to the gateway");
+    else if (c === "reconnecting") setModeText("Lost the gateway stream. Reconnecting…");
   });
   on("auth", (ok) => {
     if (ok === null) { $("overlay").hidden = false; return; }
-    if (!ok) { location.replace("login.html?next=console.html"); return; }
-    for (const id of ["who", "reset", "logout"]) $(id).hidden = false;
+    if (!ok) { location.replace("login.html"); return; }
+    for (const id of ["reset", "logout"]) $(id).hidden = false;
   });
   $("logout").addEventListener("click", async () => { await source.logout(); location.href = "index.html"; });
   $("reset").addEventListener("click", async () => {
@@ -123,87 +119,101 @@
     if (await source.reset()) location.reload(); else alert("Reset failed.");
   });
 
-  // ------------------------------------------------------------------ plant tiles
-  const tile = (id) => { const t = $(id); return { t, v: t.querySelector(".v"), s: t.querySelector(".s") }; };
-  const T = { cl: tile("t-cl"), pump: tile("t-pump"), doser: tile("t-doser"), mode: tile("t-mode"),
-              demand: tile("t-demand"), site: tile("t-site"), cab: tile("t-cab"), health: tile("t-health") };
-  function put(x, text, sub, opts = {}) {
-    x.v.replaceChildren();
-    if (opts.lamp) { const s = el("span", "state"); s.append(el("i"), document.createTextNode(text)); x.v.append(s); }
-    else if (opts.unit) { x.v.append(document.createTextNode(text + " "), el("small", "", opts.unit)); }
-    else x.v.textContent = text;
-    x.s.textContent = sub || "";
-    x.t.classList.toggle("on", !!opts.on);
-    x.t.classList.toggle("warn", !!opts.warn);
-    x.t.classList.toggle("nosensor", !!opts.nosensor);
-  }
-  let lastState = null;
-  function renderHealth() {
-    const s = lastState;
+  // ------------------------------------------------------------------ station: live values drive the schematic
+  let state = null;
+  const num = (node, text, unit) => node.replaceChildren(document.createTextNode(text + " "), el("small", "", unit));
+  function renderLink() {
+    const link = $("link"), s = state;
+    const bad = (t) => { link.classList.add("bad"); $("link-text").textContent = t; $("station").classList.add("stale"); };
     if (!s) return;
-    const bad = (text, sub) => { put(T.health, text, sub, { lamp: true }); T.health.t.classList.add("bad"); $("plant").classList.add("stale"); };
-    if (s.unreachable) return bad("NO GATEWAY", "the gateway API is not answering");
+    if (s.unreachable) return bad("Gateway not answering");
     const age = s.ts ? Math.max(0, source.now() - s.ts) : null;
-    const ageText = age === null ? "no reading yet" : age < 2 ? "updated just now" : `last update ${age < 90 ? `${Math.round(age)} s` : `${Math.round(age / 60)} min`} ago`;
-    if (!s.connected) return bad("DISCONNECTED", s.ts ? `${ageText}; values shown are the last known` : "no reading yet");
-    if (age > 5) return bad("STALE", ageText);
-    T.health.t.classList.remove("bad"); $("plant").classList.remove("stale");
-    const up = s.input_registers && s.input_registers.UPTIME_S;
-    put(T.health, "CONNECTED", `${ageText}${up !== undefined ? ` · up ${up < 120 ? `${up} s` : `${Math.round(up / 60)} min`}` : ""}`, { lamp: true, on: true });
+    if (!s.connected) return bad(`Station disconnected${age !== null ? `, last seen ${age < 90 ? `${Math.round(age)} s` : `${Math.round(age / 60)} min`} ago` : ""}`);
+    if (age > 5) return bad(`Station data is ${Math.round(age)} s old`);
+    link.classList.remove("bad"); $("station").classList.remove("stale");
+    $("link-text").textContent = "Station connected";
   }
   on("state", (s) => {
-    if (s.unreachable) { lastState = { ...(lastState || {}), unreachable: true }; renderHealth(); return; }
-    lastState = s;
-    renderHealth();
+    if (s.unreachable) { state = { ...(state || {}), unreachable: true }; renderLink(); return; }
+    state = s;
+    renderLink();
     if (!s.holding || s.holding.TANK_LEVEL_PCT === undefined) return;
     const h = s.holding, c = s.coils, di = s.discrete_inputs, ir = s.input_registers;
-    const level = h.TANK_LEVEL_PCT / 10;
-    $("tank-v").replaceChildren(document.createTextNode(level.toFixed(1) + " "), el("small", "", "%"));
-    $("tank-s").textContent = `pump starts at ${h.LEVEL_LOW_SP / 10}, stops at ${h.LEVEL_HIGH_SP / 10} %`;
-    $("tank-fill").style.height = `${Math.max(0, Math.min(100, level))}%`;
-    $("tank-hi").style.bottom = `${Math.min(100, h.LEVEL_HIGH_SP / 10)}%`;
-    $("tank-lo").style.bottom = `${Math.min(100, h.LEVEL_LOW_SP / 10)}%`;
+    const level = h.TANK_LEVEL_PCT / 10, y = (pct) => 166 - 1.4 * Math.max(0, Math.min(100, pct));
+    $("water").setAttribute("transform", `translate(0,${y(level).toFixed(1)})`);
+    for (const [id, sp] of [["sp-hi", h.LEVEL_HIGH_SP / 10], ["sp-lo", h.LEVEL_LOW_SP / 10]]) { $(id).setAttribute("y1", y(sp)); $(id).setAttribute("y2", y(sp)); }
+    $("g-pump").classList.toggle("on", !!di.PUMP_RUNNING);
+    $("g-doser").classList.toggle("on", !!di.DOSER_RUNNING);
+    $("g-alarm").classList.toggle("on", !!c.ALARM);
+    $("flow-in").classList.toggle("on", !!di.PUMP_RUNNING);
+    $("flow-dose").classList.toggle("on", !!di.DOSER_RUNNING);
+    $("flow-out").classList.toggle("on", ir.DEMAND_PCT > 0 && level > 0);
+    num($("r-level"), level.toFixed(1), "%");
     const cl = h.CHLORINE_MGL / 100;
-    put(T.cl, cl.toFixed(2), `target ${(h.CHLORINE_TARGET / 100).toFixed(2)} · alarm line 4.0`, { unit: "mg/L", warn: cl >= 4 });
-    put(T.pump, di.PUMP_RUNNING ? "RUNNING" : "OFF", `command ${onOff(c.PUMP_CMD)}`, { lamp: true, on: di.PUMP_RUNNING });
-    put(T.doser, di.DOSER_RUNNING ? "DOSING" : "OFF", `rate ${h.DOSER_RATE_PCT} % · command ${onOff(c.DOSER_CMD)}`, { lamp: true, on: di.DOSER_RUNNING });
-    put(T.mode, c.SAFE_MODE ? "SAFE MODE" : c.AUTO_MODE ? "AUTO" : "MANUAL",
-        c.ALARM ? "ALARM sounding" : c.SAFE_MODE ? "doser off, remote writes ignored" : c.AUTO_MODE ? "station runs the pump" : "remote pump control",
-        { warn: !!(c.SAFE_MODE || c.ALARM) });
-    put(T.demand, (ir.DEMAND_PCT / 10).toFixed(0), "of maximum town demand", { unit: "%" });
-    const site = di.PRESENCE || di.CABINET_OPEN;
-    put(T.site, site ? "SOMEONE" : "NOBODY", `${di.PRESENCE ? "motion" : "no motion"} · cabinet ${di.CABINET_OPEN ? "open" : "closed"}`, { lamp: true, on: site });
-    // DHT11: the register reads 0 until the sensor has answered once, and 0 % humidity is outside
-    // what a DHT11 can report, so 0/0 (or a missing register, or 0xFFFF) means there is no sensor.
+    num($("r-cl"), cl.toFixed(2), "mg/L");
+    $("read-cl").classList.toggle("warn", cl >= 4);
+    num($("r-demand"), (ir.DEMAND_PCT / 10).toFixed(0), "%");
+    // Mode and alarm are separate states: the station can be in AUTO with the alarm on.
+    const mode = $("chip-mode");
+    mode.textContent = c.SAFE_MODE ? "SAFE MODE" : c.AUTO_MODE ? "AUTO" : "MANUAL";
+    mode.classList.toggle("safe", !!c.SAFE_MODE);
+    $("chip-alarm").textContent = c.ALARM ? "ALARM ON" : "ALARM OFF";
+    $("chip-alarm").classList.toggle("on", !!c.ALARM);
+    $("f-pump").textContent = di.PUMP_RUNNING ? "running" : "off";
+    $("f-doser").textContent = di.DOSER_RUNNING ? `dosing ${h.DOSER_RATE_PCT} %` : `off, set ${h.DOSER_RATE_PCT} %`;
+    $("f-site").textContent = di.PRESENCE ? "motion" : di.CABINET_OPEN ? "cabinet open" : "nobody";
+    // DHT11: the register stays 0 until the sensor has answered once, and 0 % humidity is outside
+    // what a DHT11 reports, so 0/0 (or a missing register, or 0xFFFF) means there is no sensor.
     const tC = ir.CABINET_TEMP_C, rh = ir.CABINET_HUMIDITY;
     const dead = tC === undefined || rh === undefined || tC === 0xFFFF || rh === 0xFFFF || (tC === 0 && rh === 0);
-    if (dead) put(T.cab, "no sensor", "temperature and humidity not reported", { nosensor: true });
-    else put(T.cab, (tC / 10).toFixed(1), `humidity ${(rh / 10).toFixed(0)} %`, { unit: "°C" });
+    $("f-cab").textContent = dead ? "no sensor" : `${(tC / 10).toFixed(1)} °C, ${(rh / 10).toFixed(0)} %`;
+    updateCard();
   });
-  setInterval(renderHealth, 1000);
+  setInterval(renderLink, 1000);
 
-  // ------------------------------------------------------------------ command feed
+  // ------------------------------------------------------------------ shared incident facts
   const events = new Map(), rows = new Map(), feed = $("feed");
-  let selected = null;
+  const stepsBy = new Map();          // event id -> agent steps, in order
+  let inbox = [], selected = null;
+  const replyErr = new Map();
+  const question = (id) => inbox.find((q) => q.event_id === id);
+  const stepsOf = (id) => stepsBy.get(id) || [];
+  // Where one held command stands, from the operator's inbox and the agent's steps.
+  function incident(e) {
+    const st = stepsOf(e.id), q = question(e.id);
+    const has = (k) => st.some((s) => s.kind === k);
+    const replyStep = st.find((s) => s.kind === "reply");
+    const reply = (q && q.reply) || (replyStep ? (/ALLOW/.test(replyStep.text) ? "ALLOW" : "BLOCK") : null);
+    const afterReply = replyStep ? st.slice(st.indexOf(replyStep) + 1) : [];
+    const briefed = !!q || has("text");
+    const expired = !!q && !q.open && !reply;
+    const finished = reply ? afterReply.some((s) => s.kind === "cost" || s.kind === "report") && afterReply.some((s) => s.kind === "cost" || s.kind === "verdict")
+      : !briefed && st.some((s) => s.kind === "cost");
+    const refused = st.find((s) => s.kind === "refused");
+    return { q, reply, briefed, expired, finished, report: has("report"), released: has("released"), refused: refused && refused.text,
+      blocked: st.some((s) => /blocked for/.test(s.text || "")),
+      text: (q && q.text) || (st.find((s) => s.kind === "text") || {}).text,
+      phase: reply ? (finished ? "done" : "followup") : expired || finished ? "done" : briefed ? "you" : st.length || e.decision === "HOLD" ? "investigating" : "idle" };
+  }
+  const isOpenHold = (e) => e.decision === "HOLD" && ["investigating", "you"].includes(incident(e).phase);
+
+  // ------------------------------------------------------------------ command log
   function renderRow(e) {
     const li = el("li", `ev ${e.decision}`);
     li.dataset.id = e.id;
     li.tabIndex = 0;
-    const d = describe(e), r = reasons(e);
-    li.append(badge(e.decision, isTamper(e) ? "TAMPER" : undefined));
-    const what = el("div", "what", d.label + " ");
-    what.append(el("span", "val", d.val));
-    li.append(what);
-    li.append(el("div", "why", r.rest.length ? `${r.main} (+${r.rest.length} more ${r.rest.length > 1 ? "reasons" : "reason"})` : r.main));
-    li.append(el("div", "meta", `${fmtTime(e.ts)} · ${e.src_ip ?? "?"} · ${e.name ?? ""} · ${e.id}`));
+    const r = reasons(e);
+    li.append(badge(e.decision, isTamper(e) ? "TAMPER" : undefined, "mini"), el("span", "what", describe(e).text), el("span", "time", fmtTime(e.ts)));
+    li.append(el("span", "why", e.decision === "ALLOW" ? "Forwarded to the station" : r.main));
     li.addEventListener("click", () => select(e.id));
     li.addEventListener("keydown", (k) => { if (k.key === "Enter" || k.key === " ") { k.preventDefault(); select(e.id); } });
     return li;
   }
-  function select(id) {
+  function select(id, arrive) {
+    if (selected === id) return updateCard();
     selected = id;
     for (const [k, li] of rows) li.classList.toggle("sel", k === id);
-    showForecast(events.get(id));
+    showEvent(events.get(id), arrive);
   }
   on("event", (e, isNew) => {
     if (!e || !e.id || events.has(e.id)) return;
@@ -216,131 +226,222 @@
     feed.insertBefore(li, before);
     rows.set(e.id, li);
     $("feed-empty").hidden = true;
-    $("feed-count").textContent = `${events.size} shown, newest first`;
-    if (e.decision !== "ALLOW" && (isNew || !selected || idNum(selected) < n)) select(e.id);
-    else if (!selected) select(e.id);
-    renderHeld();
+    $("feed-count").textContent = `${events.size}, newest first`;
+    // A held or denied command takes the centre. An allowed one does too, unless a held command is waiting there.
+    const cur = selected && events.get(selected);
+    if (!cur || (idNum(cur.id) < n && (e.decision !== "ALLOW" || !isOpenHold(cur)))) select(e.id, isNew && e.decision !== "ALLOW");
   });
+  on("inbox", (list) => { inbox = list || []; updateCard(); renderPhase(); });
 
-  // ------------------------------------------------------------------ held commands
-  let inbox = [];
-  const outcomes = new Map();     // event id -> { kind, text } from the agent log (reply / released / refused)
-  const replyErr = new Map();
-  let heldSig = "";
-  on("inbox", (list) => { inbox = list || []; renderHeld(); });
-
-  function heldCard(e, q) {
-    const out = outcomes.get(e.id) || {};
-    const answered = (q && q.reply) || out.reply;
-    const open = !answered && (!q || q.open);
-    const card = el("div", `hold-card ${open ? "open" : "done"}`);
-    const d = describe(e), r = reasons(e);
-    const top = el("div", "top");
-    top.append(badge("HOLD", isTamper(e) ? "TAMPER" : undefined), el("span", "what", `${d.label} ${d.val}`),
-               el("span", "id", `${fmtTime(e.ts)} · ${e.id}`));
-    card.append(top);
-    if (!open) {
-      let text = answered === "BLOCK" ? "You rejected it. The command was never sent to the station."
-        : answered === "ALLOW" ? (out.refused ? `You approved it, but the release was refused: ${out.refused}`
-          : out.released ? "You approved it. The gateway re-checked it and sent it to the station."
-          : out.closed ? "You approved it, but it was not released: it did not pass the safety re-check. The agent's assessment says why."
-          : "You approved it. It is being re-checked against the physics model before any release.")
-        : "The question expired without a reply. Nothing was sent.";
-      card.append(el("div", "outcome", text));
-      return card;
-    }
-    card.append(el("div", "physics", r.main));
-    const actions = el("div", "actions");
-    const reject = el("button", "reject", "Reject"), approve = el("button", "approve", "Approve");
-    if (!q) { reject.disabled = approve.disabled = true; }
-    reject.addEventListener("click", () => answer(q, "BLOCK", card));
-    approve.addEventListener("click", () => answer(q, "ALLOW", card));
-    actions.append(reject, approve);
-    actions.append(el("span", "note", !q ? "Held and not sent. Waiting for the agent's message before you can decide."
-      : `Not sent to the station. An approval is re-checked against physics before release. ${q.code ? `Code ${q.code}, ` : ""}valid ${Math.max(1, Math.ceil((q.expires_in_s || 0) / 60))} min.`));
-    card.append(actions);
-    if (r.rest.length) card.append(el("div", "also", `Also: ${r.rest.join("; ")}`));
-    if (q) {
-      const msg = el("div", "msg");
-      msg.append(el("div", "from", "Message to the operator"), el("div", "", q.text));
-      card.append(msg);
-      if (q.covers && q.covers.length) card.append(el("div", "covers", `Approving would send: ${q.covers.join("; ")}`));
-    }
-    if (replyErr.get(e.id)) card.append(el("div", "err", replyErr.get(e.id)));
-    return card;
+  // ------------------------------------------------------------------ the selected command
+  const sig = {};
+  const changed = (slot, value) => { const s = JSON.stringify(value); if (sig[slot] === s) return false; sig[slot] = s; return true; };
+  function showEvent(e, arrive) {
+    if (!e) return;
+    for (const k of Object.keys(sig)) delete sig[k];
+    $("idle").hidden = true; $("dc").hidden = false;
+    $("dc").className = `dc ${e.decision}`;
+    const r = reasons(e);
+    $("dc-badge").replaceChildren(badge(e.decision, isTamper(e) ? "TAMPER" : undefined, "big"));
+    $("dc-what").textContent = describe(e).text;
+    $("dc-reason").textContent = e.decision === "ALLOW" ? "Checked and forwarded to the station." : r.main;
+    const also = `From ${e.src_ip ?? "?"} at ${fmtTime(e.ts)} · ${e.id}${r.rest.length && e.decision !== "ALLOW" ? ` · Also: ${r.rest.join("; ")}` : ""}`;
+    $("dc-also").textContent = also; $("dc-also").title = also;
+    $("decision").classList.remove("arrive");
+    if (arrive) { void $("decision").offsetWidth; $("decision").classList.add("arrive"); }
+    updateCard();
+    showForecast(e, arrive);
   }
-  async function answer(q, reply, card) {
-    card.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  const STAGES = [["Held by gateway", "no AI"], ["Agent investigates", ""], ["Your decision", ""], ["Report", ""]];
+  function updateCard() {
+    const e = selected && events.get(selected);
+    if (!e) return;
+    const hold = e.decision === "HOLD", inc = incident(e), open = hold && isOpenHold(e);
+    $("decision").classList.toggle("held", open);
+    $("stages").hidden = !hold;
+    if (hold && changed("stages", [inc.phase, inc.report, inc.reply])) {
+      const at = { investigating: 1, you: 2, followup: 3, done: inc.report ? 4 : 3 }[inc.phase] ?? 1;
+      $("stages").replaceChildren(...STAGES.map(([t, sub], i) => {
+        const done = i < at || (i === 3 && inc.report), skipped = i === 3 && inc.phase === "done" && !inc.report;
+        const li = el("li", done ? "done" : i === at && !skipped ? `active${i === 2 ? " you" : ""}` : "");
+        const txt = el("span"); txt.append(el("b", "", t)); if (sub) txt.append(el("small", "", sub));
+        li.append(el("span", "n", done ? "✓" : String(i + 1)), txt);
+        return li;
+      }));
+    }
+    // What the rig is doing right now, so the screen and the board tell the same story.
+    const bank = state && (e.kind === "coil" ? state.coils : state.holding);
+    const cur = bank ? bank[e.name] : undefined;
+    const alarm = !!(state && state.coils && state.coils.ALARM);
+    if (changed("rig", [e.id, e.decision, cur, alarm, inc.released])) {
+      const d = describe(e), items = [el("li", "h", "On the rig")];
+      const delivered = e.decision === "ALLOW" || inc.released;
+      items.push(el("li", delivered ? "ok" : "", delivered ? "Command delivered" : "Command not delivered"));
+      if (cur !== undefined) items.push(el("li", "", `${d.label} ${delivered ? "is" : "still"} ${d.f(cur)}`));
+      if (e.decision !== "ALLOW") items.push(el("li", alarm ? "alarm" : "", alarm ? "Red LED and buzzer on" : "Alarm off"));
+      $("rigline").replaceChildren(...items);
+    }
+    const brief = $("brief"), actions = $("actions");
+    if (!hold) { brief.className = "brief"; brief.replaceChildren(); actions.replaceChildren(); return; }
+    const last = stepsOf(e.id).map(plain).filter((p) => p && p.who === "agent").pop();
+    if (changed("brief", [inc.phase, inc.text, !!inc.q, inc.phase === "investigating" && last && last.t])) {
+      if (inc.phase === "investigating") {
+        brief.className = "brief wait";
+        const t = el("div"); t.append(el("b", "", "The agent is investigating"), el("span", "", `${last ? `${last.t}. ` : ""}Approve and Reject appear with its briefing. The command is already blocked.`));
+        brief.replaceChildren(el("div", "spin"), t);
+      } else if (inc.text) {
+        brief.className = "brief";
+        brief.replaceChildren(el("div", "lbl", "Agent briefing"), el("div", "txt", inc.text));
+        if (inc.phase === "you" && inc.q && inc.q.covers && inc.q.covers.length) brief.append(el("div", "covers", `Approving would send: ${inc.q.covers.join("; ")}`));
+      } else { brief.className = "brief"; brief.replaceChildren(); }
+    }
+    const err = replyErr.get(e.id) || "";
+    if (changed("actions", [inc.phase, inc.reply, inc.report, inc.released, inc.refused, inc.expired, inc.blocked, err, inc.q && Math.ceil((inc.q.expires_in_s || 0) / 60)])) {
+      actions.replaceChildren();
+      if (inc.phase === "you" && !inc.q) actions.append(el("span", "note", "Loading the operator's question…"));
+      else if (inc.phase === "you") {
+        const reject = el("button", "reject", "Reject and block source"), approve = el("button", "approve", "Approve release");
+        reject.addEventListener("click", () => answer(inc.q, "BLOCK"));
+        approve.addEventListener("click", () => answer(inc.q, "ALLOW"));
+        const note = el("span", "note", `An approval is re-checked against physics before release.${inc.q.code ? ` Code ${inc.q.code}.` : ""}`);
+        if (err) note.replaceChildren(el("span", "err", err));
+        actions.append(reject, approve, note);
+      } else if (inc.phase !== "investigating") {
+        const text = inc.reply === "BLOCK" ? `You rejected it. The command was never sent${inc.blocked ? ", and the source is blocked" : ""}.`
+          : inc.reply === "ALLOW" ? (inc.refused ? `You approved it, but the release was refused: ${inc.refused}`
+            : inc.released ? "You approved it. It passed the safety re-check and was sent to the station."
+            : inc.finished ? "You approved it, but it was not released: it did not pass the safety re-check."
+            : "You approved it. It is being re-checked against the physics model before any release.")
+          : inc.expired ? "The question expired without a reply. Nothing was sent." : "";
+        if (text) actions.append(el("div", "outcome", text));
+        if (inc.report) { const a = el("a", "btn", "Open incident report"); a.href = reportHref(e.id); a.target = "_blank"; actions.append(a); }
+      }
+    }
+  }
+  const reportHref = (id) => `report.html?id=${encodeURIComponent(id)}${replay ? "&mode=replay" : ""}`;
+  async function answer(q, reply) {
+    $("actions").querySelectorAll("button").forEach((b) => (b.disabled = true));
     const err = await source.reply(q, reply);
     if (err) replyErr.set(q.event_id, err); else replyErr.delete(q.event_id);
-    renderHeld();
-  }
-  function renderHeld() {
-    const box = $("held");
-    const byId = new Map(inbox.map((q) => [q.event_id, q]));
-    const held = [...events.values()].filter((e) => e.decision === "HOLD" || byId.has(e.id)).sort((a, b) => idNum(b.id) - idNum(a.id));
-    const isOpen = (e) => { const q = byId.get(e.id), o = outcomes.get(e.id) || {}; return !((q && q.reply) || o.reply) && (!q || q.open); };
-    const openOnes = held.filter(isOpen);
-    // Redraw only when something changed, so a button is never replaced under the pointer.
-    const sig = JSON.stringify([held.map((e) => e.id), inbox.map((q) => [q.event_id, q.reply, q.open, Math.ceil((q.expires_in_s || 0) / 60)]),
-                                [...outcomes], [...replyErr]]);
-    if (sig === heldSig) return;
-    heldSig = sig;
-    box.replaceChildren(...openOnes.map((e) => heldCard(e, byId.get(e.id))),
-                        ...held.filter((e) => !isOpen(e)).slice(0, 6).map((e) => heldCard(e, byId.get(e.id))));
-    $("held-empty").hidden = held.length > 0;
-    $("held-count").textContent = openOnes.length ? `${openOnes.length} waiting for you` : held.length ? "none waiting" : "";
+    delete sig.actions;
+    updateCard();
   }
 
-  // ------------------------------------------------------------------ agent activity
-  const LABEL = { tool: "Looked up", result: "Found", note: "Note", verdict: "Assessment", text: "Told operator",
-                  reply: "Operator", action: "Action", status: "Status", cost: "Model cost", waiting: "Waiting",
-                  released: "Released", refused: "Refused", report: "Report" };
-  const stepIds = new Set();
-  let lastStepEvent;
+  // ------------------------------------------------------------------ agent timeline
+  const TOOL = {
+    get_event: () => "Read the held command",
+    get_recent_traffic: (a) => `Checked recent traffic from ${a.src_ip || "the source"}`,
+    read_station: () => "Read the station's live state",
+    run_physics: () => "Ran the physics model on the command",
+    diff_logic_baseline: () => "Compared settings with the last known good copy",
+    block_source: (a) => `Blocked source ${a.src_ip || ""}`.trim(),
+    revert_to_last_known_good: () => "Reverted settings to last known good",
+    enter_safe_mode: () => "Put the station in safe mode",
+    release_held_command: () => "Asked the gateway to release the held command",
+    task: () => "Handed its findings to the report writer",
+    notify_operator: () => null,
+  };
+  const ACT = { block_source: "block", revert_to_last_known_good: "revert", enter_safe_mode: "safe" };
+  // One agent step in plain words: { who, t, sub, quote, body, raw, rig, act } or null to leave it out.
+  function plain(s) {
+    const text = String(s.text ?? "").replace(/\*\*/g, ""), d = s.data || {};
+    switch (s.kind) {
+      case "status": return /^Incident opened/.test(text) ? { who: "gateway", t: "Held the command", sub: "Decided by policy and physics code, before any AI ran" } : { who: "agent", t: text };
+      case "action":
+        if (/^Station alarm raised/.test(text)) return { who: "gateway", t: "Raised the station alarm", sub: "Red LED and buzzer on the rig", rig: true };
+        if (/blocked for/.test(text)) return { who: "agent", t: text.replace(/\s*\(.*\)$/, ""), act: "block" };
+        if (/revert|restored/i.test(text)) return { who: "agent", t: text, act: "revert", rig: true };
+        if (/safe mode/i.test(text)) return { who: "agent", t: text, act: "safe", rig: true };
+        return { who: "agent", t: text };
+      case "tool": {
+        const f = TOOL[d.name];
+        const t = f ? f(d.args || {}) : `Used ${d.name || "a tool"}`;
+        return t ? { who: "agent", t, raw: text, tool: d.name, act: ACT[d.name] } : null;
+      }
+      case "result": return { result: true, tool: d.name, raw: text };
+      case "text": return { who: "agent", t: "Briefed the operator", quote: text };
+      case "verdict": return { who: "agent", t: "Assessment", body: text };
+      case "reply": return { who: "you", t: /ALLOW/.test(text) ? "You approved the release" : "You rejected the command" };
+      case "released": return { who: "gateway", t: "Released the command to the station", sub: "It passed the safety re-check", rig: true };
+      case "refused": return { who: "gateway", t: "Refused the release", sub: text };
+      case "report": return { who: "agent", t: "Wrote the incident report", report: true, act: "report" };
+      case "cost": return null;
+      default: return text ? { who: "agent", t: text } : null;
+    }
+  }
+  const WHO = { gateway: "Gateway", agent: "Agent", you: "Operator" };
+  const stepIds = new Set(), pending = [];   // pending: tool items still waiting for their result
+  let lastStepEvent, lastItem = null;
+  function physicsFinding(raw) {
+    const code = /"code":\s*"(\w+)"/.exec(raw), safe = /"safe":\s*(true|false)/.exec(raw);
+    if (safe && safe[1] === "true") return "Result: stays within limits";
+    const words = { CHLORINE_HIGH: "chlorine would pass the 4 mg/L limit", TANK_OVERFLOW: "the tank would overflow", PRESSURE_LOSS: "the town would lose pressure", CHLORINE_LOW: "chlorine would fall too low" };
+    return code ? `Result: unsafe, ${words[code[1]] || code[1]}` : null;
+  }
   on("agent", (s) => {
     if (!s || stepIds.has(s.id)) return;
     stepIds.add(s.id);
-    const steps = $("steps");
-    if (s.event_id !== lastStepEvent) {
-      const e = events.get(s.event_id);
-      steps.append(el("li", "inc", `Incident ${s.event_id ?? ""}${e ? `: ${describe(e).label} ${describe(e).val}` : ""}`));
-      lastStepEvent = s.event_id;
+    if (s.event_id) { if (!stepsBy.has(s.event_id)) stepsBy.set(s.event_id, []); stepsBy.get(s.event_id).push(s); }
+    const p = plain(s), tl = $("tl");
+    if (p && p.result) {                   // fold a tool's result into the step that called it
+      const i = pending.findIndex((x) => x.tool === p.tool);
+      if (i >= 0) {
+        const { li } = pending.splice(i, 1)[0];
+        li.querySelector("pre").textContent += `\n→ ${p.raw}`;
+        const f = p.tool === "run_physics" && physicsFinding(p.raw);
+        if (f) li.querySelector(".t").after(el("div", "sub", f));
+      }
+    } else if (p) {
+      if (s.event_id !== lastStepEvent) {
+        const e = events.get(s.event_id);
+        tl.append(el("li", "inc", `${s.event_id ?? "Incident"}${e ? ` · ${describe(e).text}` : ""}`));
+        lastStepEvent = s.event_id;
+        document.querySelectorAll(".act").forEach((a) => a.classList.remove("used"));
+      }
+      const li = el("li", `it ${p.who} new`);
+      const who = el("div", "who", WHO[p.who]);
+      who.append(document.createTextNode(` · ${fmtTime(s.ts)}`));
+      if (p.rig) who.append(el("span", "tag", "ON THE RIG"));
+      li.append(who, el("div", "t", p.t));
+      if (p.sub) li.append(el("div", "sub", p.sub));
+      if (p.quote) { const det = el("details"); det.append(el("summary", "", "Read the briefing"), el("div", "quote", p.quote)); li.append(det); }
+      if (p.body) {
+        const det = el("details"); det.append(el("summary", "", "Read the assessment"), el("div", "body", p.body)); li.append(det);
+      }
+      if (p.raw) {
+        const det = el("details"); det.append(el("summary", "", "Raw tool call"), el("pre", "", p.raw)); li.append(det);
+        pending.push({ tool: p.tool, li });
+      }
+      if (p.report && s.event_id) { const a = el("a", "rep", "Open incident report"); a.href = reportHref(s.event_id); a.target = "_blank"; li.append(a); }
+      if (p.act) { const chip = document.querySelector(`.act[data-act="${p.act}"]`); if (chip) chip.classList.add("used"); }
+      tl.append(li);
+      if (lastItem) lastItem.classList.remove("live");
+      lastItem = li;
+      $("tl-empty").hidden = true;
+      const box = $("agent-scroll");
+      box.scrollTop = box.scrollHeight;
     }
-    const li = el("li", `step ${LABEL[s.kind] ? s.kind : "status"}`);
-    const text = String(s.text ?? "").replace(/\*\*/g, "");
-    const t = el("span", "t", text);
-    li.append(el("span", "k", `${LABEL[s.kind] ?? s.kind}`), t);
-    li.title = fmtTime(s.ts);
-    if (s.kind === "report" && s.event_id) {
-      const a = el("a", "", "Open the incident report");
-      a.href = `report.html?id=${encodeURIComponent(s.event_id)}${replay ? "&mode=replay" : ""}`;
-      a.target = "_blank";
-      t.append(document.createTextNode(" "), a);
-    }
-    steps.append(li);
-    $("steps-empty").hidden = true;
-    const box = $("agent-scroll");
-    box.scrollTop = box.scrollHeight;
-    if (s.event_id && ["reply", "released", "refused", "report", "verdict"].includes(s.kind)) {
-      const o = outcomes.get(s.event_id) || {};
-      if ((s.kind === "report" || s.kind === "verdict") && o.reply) o.closed = true;   // the incident is finished
-      if (s.kind === "reply") o.reply = /ALLOW/.test(text) ? "ALLOW" : "BLOCK";
-      if (s.kind === "released") o.released = true;
-      if (s.kind === "refused") o.refused = text;
-      outcomes.set(s.event_id, o);
-      renderHeld();
-    }
+    renderPhase();
+    if (s.event_id === selected) updateCard();
   });
+  function renderPhase() {
+    const e = lastStepEvent && events.get(lastStepEvent), ph = $("phase");
+    const phase = e ? incident(e).phase : lastStepEvent ? "investigating" : "idle";
+    const [text, cls] = { idle: ["Idle", ""], investigating: ["Investigating", "busy"], you: ["Waiting for your decision", "you"], followup: ["Following up", "busy"], done: ["Done", ""] }[phase];
+    ph.textContent = text; ph.className = `phase ${cls}`;
+    if (lastItem) lastItem.classList.toggle("live", cls === "busy");
+  }
 
   on("reset", () => {
-    events.clear(); rows.clear(); stepIds.clear(); outcomes.clear(); replyErr.clear();
-    inbox = []; selected = null; lastStepEvent = undefined; lastState = null; heldSig = "";
-    feed.replaceChildren(); $("steps").replaceChildren(); $("held").replaceChildren();
-    $("feed-empty").hidden = $("steps-empty").hidden = $("held-empty").hidden = false;
-    $("feed-count").textContent = "newest first"; $("held-count").textContent = "";
-    $("fc-title").textContent = "physics model forecast"; $("fc-sub").textContent = "Select a command to see its forecast.";
-    clearChart();
+    events.clear(); rows.clear(); stepIds.clear(); stepsBy.clear(); replyErr.clear(); pending.length = 0;
+    inbox = []; selected = null; lastStepEvent = undefined; lastItem = null; state = null;
+    for (const k of Object.keys(sig)) delete sig[k];
+    feed.replaceChildren(); $("tl").replaceChildren();
+    $("feed-empty").hidden = $("tl-empty").hidden = false;
+    $("feed-count").textContent = "newest first";
+    $("idle").hidden = false; $("dc").hidden = true; $("decision").classList.remove("held", "arrive");
+    document.querySelectorAll(".act").forEach((a) => a.classList.remove("used"));
+    renderPhase(); clearChart();
   });
 
   // ------------------------------------------------------------------ forecast chart
@@ -348,83 +449,63 @@
   const SERIES = { CHLORINE_HIGH: 2, CHLORINE_LOW: 2, TANK_OVERFLOW: 1, PRESSURE_LOSS: 1, PUMP_SHORT_CYCLE: 1 };
   const UNIT = { 1: ["Tank level", "%", 1], 2: ["Chlorine", "mg/L", 2] };
   const CL_REGS = ["DOSER_RATE_PCT", "DOSER_CMD", "CHLORINE_TARGET"];
-  let token = 0;
-  function clearChart() { chartBox.querySelectorAll("svg").forEach((n) => n.remove()); tip.hidden = true; }
-
-  async function showForecast(e) {
-    if (!e) return;
+  let token = 0, drawn = null;
+  function clearChart() { chartBox.querySelectorAll("svg").forEach((n) => n.remove()); tip.hidden = true; drawn = null; }
+  async function showForecast(e, animate) {
     const mine = ++token;
     clearChart();
-    const d = describe(e);
-    $("fc-title").textContent = `${e.id} · ${d.label} ${d.val}`;
-    $("fc-sub").textContent = "Loading the forecast…";
     let full;
-    try { full = await source.getEvent(e.id); } catch (err) { if (mine === token) $("fc-sub").textContent = "The forecast for this command is not available."; return; }
+    try { full = await source.getEvent(e.id); } catch (err) { return; }
     if (mine !== token) return;
     const p = full.prediction, traj = p && p.trajectory;
-    if (!traj || traj.length < 2) {
-      $("fc-sub").textContent = `${reasons(full).main || "No forecast"}. No physics forecast was run for this command.`;
-      return;
-    }
+    if (!traj || traj.length < 2) return;
     const v = (p.violations || []).find((x) => !x.pre_existing && SERIES[x.code]);
-    const idx = v ? SERIES[v.code] : CL_REGS.includes(e.name) ? 2 : 1;
-    const [name, unit, dp] = UNIT[idx];
-    $("fc-sub").textContent = v
-      ? `Forecast if it had been sent. The gateway ${full.decision === "DENY" ? "denied" : "held"} it, so this did not happen.`
-      : `${name} stays inside the limits for the next ${Math.round(traj[traj.length - 1][0])} min of plant time (${full.decision}).`;
-    draw(traj, p.baseline_trajectory, idx, name, unit, dp, v);
+    drawn = { traj, idx: v ? SERIES[v.code] : CL_REGS.includes(e.name) ? 2 : 1, v };
+    draw(animate);
   }
-
-  function draw(traj, base, idx, name, unit, dp, v) {
+  function draw(animate) {
+    if (!drawn) return;
+    const { traj, idx, v } = drawn, [name, unit, dp] = UNIT[idx];
     const r = chartBox.getBoundingClientRect();
-    const W = Math.max(420, Math.round(r.width - 16)), H = Math.max(140, Math.round(r.height - 14));
-    const L = 52, R = 18, Tp = 26, B = 44;
-    const thin = (a) => { const step = Math.max(1, Math.floor(a.length / 300)); return a.filter((_, i) => i % step === 0 || i === a.length - 1); };
-    const pts = thin(traj), bpts = base && base.length > 1 ? thin(base) : null;
+    const W = Math.max(380, Math.round(r.width)), H = Math.max(100, Math.round(r.height));
+    const L = 46, R = 14, Tp = 22, B = 36;
+    const step = Math.max(1, Math.floor(traj.length / 300));
+    const pts = traj.filter((_, i) => i % step === 0 || i === traj.length - 1);
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[idx]);
     const limit = v && typeof v.limit === "number" ? v.limit : null;
-    const all = ys.concat(bpts ? bpts.map((p) => p[idx]) : [], limit === null ? [] : [limit]);
+    const all = ys.concat(limit === null ? [] : [limit]);
     let y0 = Math.min(...all), y1 = Math.max(...all);
-    const pad = (y1 - y0 || 1) * 0.18; y0 = Math.max(0, y0 - pad); y1 += pad;
+    const pad = (y1 - y0 || 1) * 0.2; y0 = Math.max(0, y0 - pad); y1 += pad;
     const x1 = xs[xs.length - 1] || 1;
     const X = (t) => L + (W - L - R) * (t / x1), Y = (y) => Tp + (H - Tp - B) * (1 - (y - y0) / (y1 - y0));
     const s = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
-      "aria-label": `${name} forecast over ${Math.round(x1)} minutes${v ? `, crossing the limit of ${limit} ${unit}` : ""}` });
-    for (let i = 0; i <= 4; i++) {
-      const y = y0 + (y1 - y0) * i / 4;
-      s.append(svg("line", { x1: L, x2: W - R, y1: Y(y), y2: Y(y), class: "grid" }));
-      s.append(svg("text", { x: L - 8, y: Y(y) + 5, class: "tick", "text-anchor": "end" }, y.toFixed(dp === 2 ? 1 : 0)));
+      "aria-label": `${name} forecast over ${Math.round(x1)} minutes${v ? `, crossing the limit of ${limit} ${unit}` : ", inside the limits"}` });
+    for (let i = 0; i <= 3; i++) {
+      const y = y0 + (y1 - y0) * i / 3;
+      s.append(svg("line", { x1: L, x2: W - R, y1: Y(y), y2: Y(y), class: "gridl" }));
+      s.append(svg("text", { x: L - 8, y: Y(y) + 4, class: "tick", "text-anchor": "end" }, y.toFixed(dp === 2 ? 1 : 0)));
     }
     for (let i = 0; i <= 4; i++) {
       const t = x1 * i / 4;
-      s.append(svg("text", { x: X(t), y: H - B + 18, class: "tick", "text-anchor": i === 4 ? "end" : i ? "middle" : "start" }, `${Math.round(t)}`));
+      s.append(svg("text", { x: X(t), y: H - B + 16, class: "tick", "text-anchor": i === 4 ? "end" : i ? "middle" : "start" }, `${Math.round(t)}`));
     }
     s.append(svg("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" }));
-    s.append(svg("text", { x: (L + W - R) / 2, y: H - 8, class: "tick", "text-anchor": "middle" }, "minutes of plant time after the command"));
-    s.append(svg("text", { x: L, y: 15, class: "tick" }, `${name} (${unit})`));
+    s.append(svg("text", { x: (L + W - R) / 2, y: H - 4, class: "tick", "text-anchor": "middle" }, "minutes of plant time after the command"));
+    s.append(svg("text", { x: L, y: 13, class: "tick" }, `Forecast: ${name.toLowerCase()} (${unit})${v ? " if the command had been sent" : ""}`));
+    const lowSide = v && (v.code === "CHLORINE_LOW" || v.code === "PRESSURE_LOSS");
     if (limit !== null) {
-      const high = v.code !== "CHLORINE_LOW" && v.code !== "PRESSURE_LOSS";
-      const top = high ? Tp : Y(limit), hgt = high ? Y(limit) - Tp : H - B - Y(limit);
+      const top = lowSide ? Y(limit) : Tp, hgt = lowSide ? H - B - Y(limit) : Y(limit) - Tp;
       if (hgt > 0) s.append(svg("rect", { x: L, y: top, width: W - L - R, height: hgt, class: "over" }));
       s.append(svg("line", { x1: L, x2: W - R, y1: Y(limit), y2: Y(limit), class: "limit" }));
-      s.append(svg("text", { x: L + 8, y: Y(limit) + (high ? -7 : 18), class: "lbl red" }, `Safe limit ${limit} ${unit}`));
+      s.append(svg("text", { x: L + 8, y: Y(limit) + (lowSide ? 17 : -6), class: "lbl red" }, `Safe limit ${limit} ${unit}`));
     }
-    const path = (a) => a.map((p) => `${X(Math.min(p[0], x1)).toFixed(1)},${Y(p[idx]).toFixed(1)}`).join(" ");
-    if (bpts) {
-      s.append(svg("polyline", { points: path(bpts), class: "base" }));
-      const last = bpts[bpts.length - 1];
-      s.append(svg("text", { x: W - R - 4, y: Y(last[idx]) + 18, class: "lbl grey", "text-anchor": "end" }, "if nothing changes"));
-    }
-    s.append(svg("polyline", { points: path(pts), class: "line" }));
-    const end = pts[pts.length - 1];
-    s.append(svg("text", { x: W - R - 4, y: Y(end[idx]) < (Tp + H - B) / 2 ? Y(end[idx]) + 22 : Y(end[idx]) - 10, class: "lbl", "text-anchor": "end" }, "with this command"));
-    const lowSide = v && (v.code === "CHLORINE_LOW" || v.code === "PRESSURE_LOSS");
-    const crossed = limit !== null && ys.some((y) => (lowSide ? y <= limit : y >= limit));   // inside this window
+    s.append(svg("polyline", { points: pts.map((p) => `${X(Math.min(p[0], x1)).toFixed(1)},${Y(p[idx]).toFixed(1)}`).join(" "), class: `line${animate ? " draw" : ""}` }));
+    const crossed = limit !== null && ys.some((y) => (lowSide ? y <= limit : y >= limit));
     if (v && crossed && typeof v.minutes_until === "number" && v.minutes_until <= x1) {
       const cx = X(v.minutes_until), cy = Y(limit);
       s.append(svg("line", { x1: cx, x2: cx, y1: cy, y2: H - B, class: "limit" }));
       s.append(svg("circle", { cx, cy, r: 7, class: "cross" }));
-      s.append(svg("text", { x: Math.min(cx + 12, W - R - 170), y: H - B - 10, class: "lbl red" }, `crosses at ${mins(v.minutes_until)}`));
+      s.append(svg("text", { x: Math.min(cx + 11, W - R - 150), y: H - B - 9, class: "lbl red" }, `crosses at ${mins(v.minutes_until)}`));
     }
     const hair = svg("line", { y1: Tp, y2: H - B, class: "hair", visibility: "hidden" });
     const dot = svg("circle", { r: 5, class: "dot", visibility: "hidden" });
@@ -441,19 +522,19 @@
       tip.hidden = false;
     });
     hit.addEventListener("mouseleave", () => { hair.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); tip.hidden = true; });
-    clearChart();
+    chartBox.querySelectorAll("svg").forEach((n) => n.remove());
     chartBox.append(s);
   }
-  // The chart is drawn to the size of its box; redraw when the box changes (window resize, or
-  // the held-commands panel above it growing or shrinking).
+  // The chart is drawn to the size of its box; redraw when the box changes (window, or the briefing arriving).
   let resizeTimer, drawnFor = "";
   new ResizeObserver(() => {
     const r = chartBox.getBoundingClientRect(), key = `${Math.round(r.width)}x${Math.round(r.height)}`;
     if (key === drawnFor) return;
     drawnFor = key;
     clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => selected && showForecast(events.get(selected)), 150);
+    resizeTimer = setTimeout(() => draw(false), 120);
   }).observe(chartBox);
 
+  window.Backflow.chart = { SERIES, UNIT };
   source.start();
 })();

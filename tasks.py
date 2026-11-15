@@ -27,9 +27,6 @@ def listening(host, port):
         return False
 
 
-DEMO_PASSWORD = "backflow-demo"   # used only when .env sets no ADMIN_PASSWORD; printed at start
-
-
 def demo(sim=False):
     """Clean start of the whole demo: software station (unless .env points at the ESP32 or
     one is already up), twin, then the gateway with a full reset. Ctrl-C stops everything.
@@ -45,8 +42,6 @@ def demo(sim=False):
     if sim:     # real environment variables win over .env in the gateway (load_dotenv)
         host, port = "127.0.0.1", 5020
         gw_env.update(STATION_HOST=host, STATION_PORT=str(port))
-    password = env.get("ADMIN_PASSWORD") or DEMO_PASSWORD
-    gw_env["ADMIN_PASSWORD"] = password
     gw, api = int(env.get("GATEWAY_PORT", "1502")), int(env.get("API_PORT", "8000"))
     if listening("127.0.0.1", gw) or listening("127.0.0.1", api):
         print(f"A gateway is already running (port {gw} or {api}). Stop it first.")
@@ -66,9 +61,7 @@ def demo(sim=False):
             procs.append(subprocess.Popen([sys.executable, "-m", "twin.run", "--host", host,
                                            "--port", str(port), "--reset"]))
         kind = "software station" if host in ("127.0.0.1", "localhost") else "ESP32"
-        shown = password if password == DEMO_PASSWORD else "(ADMIN_PASSWORD from .env)"
         print(f"\n  Site:      http://localhost:{api}   (replay: /console.html?mode=replay)"
-              f"\n  Sign in:   operator / {shown}"
               f"\n  Gateway:   port {gw}   station: {host}:{port} ({kind})"
               f"\n  Scenarios: python -m attacks.normal_day   then   python -m attacks.chlorine_overdose\n")
         return subprocess.call([sys.executable, "-m", "gateway.main"], env=gw_env)
