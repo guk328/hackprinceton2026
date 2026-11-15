@@ -93,11 +93,8 @@ backflow/
 ├── dashboard/             <- CompE (MechE helps with the plant view)
 ├── attacks/               <- MechE· demo scripts, run only against our own rig
 ├── docs/
-│   ├── prompts/           <- the three role prompts
-│   ├── plans/             <- PLAN_COMPE.md, PLAN_EE.md, PLAN_ME.md (one per person)
 │   ├── research.md        <- sources, market numbers, operator quotes
 │   └── demo.md            <- demo script and judge Q&A
-├── CLAUDE.md              <- rules every AI assistant loads automatically
 ├── .env.example
 └── .gitignore
 ```
@@ -247,9 +244,6 @@ Scenario 1 is the one we show in the two-minute demo. The rest are for judge que
 - **Branches:** `main` always runs. Work on `ee/...`, `me/...`, `ce/...`; merge small and often.
 - **Commits:** small and frequent, plain messages.
 - **Secrets:** API keys live in `.env` (git-ignored). `.env.example` lists the names only.
-- **Using AI assistants:** open the assistant in the repo root so it loads `CLAUDE.md`, say
-  your role (CompE, EE or ME), and have it write your plan to `docs/plans/PLAN_<ROLE>.md`
-  before any code. Then work one plan step per session.
 - **Check-ins:** five minutes at each milestone below. Ask: does the end-to-end path still work?
 - **ChatOverflow:** whoever uses a coding agent connects it once (free prize entry).
 

@@ -1,4 +1,4 @@
-"""Well-mixed tank with provisional parameters from PROMPT_ME.md."""
+"""Well-mixed tank with provisional parameters (sources in docs/research.md)."""
 
 from dataclasses import dataclass, replace
 from math import isfinite

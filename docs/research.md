@@ -2,7 +2,7 @@
 
 ## Initial model — provisional, not field-validated
 
-All starting numbers below come from `docs/prompts/PROMPT_ME.md`, not a verified real installation. The Step 11 audit below records sources and remaining site-validation gaps; these initial values remain demo assumptions.
+All starting numbers below come from our initial design brief, not a verified real installation. The Step 11 audit below records sources and remaining site-validation gaps; these initial values remain demo assumptions.
 
 | Quantity | Initial value | Evidence status |
 |---|---|---|
@@ -152,7 +152,7 @@ Threshold evidence, checked November 13, 2026:
 
 - [EPA primary regulations](https://www.epa.gov/ground-water-and-drinking-water/national-primary-drinking-water-regulations) list chlorine MRDL 4.0 mg/L as Cl2. This project's instantaneous tank guard is a demo design choice, not a complete compliance calculation.
 - [Oregon Health Authority](https://www.oregon.gov/oha/ph/healthyenvironments/drinkingwater/monitoring/pages/mon-mrdl.aspx) explains the running annual average of monthly averages used for compliance. Do not claim one instantaneous model crossing itself proves a regulatory violation.
-- The 95% guard reserves 5% tank headroom per PROMPT_ME.md; it is an unvalidated design assumption, not a universal overflow height. Setpoint ranges come from shared/registers.yaml and are contract-tested.
+- The 95% guard reserves 5% tank headroom per our initial design brief; it is an unvalidated design assumption, not a universal overflow height. Setpoint ranges come from shared/registers.yaml and are contract-tested.
 
 Valid forecasts set `assessment_complete=True`; `safe=True` means no candidate
 violation among `checked_limits`: CHLORINE_HIGH, TANK_OVERFLOW and

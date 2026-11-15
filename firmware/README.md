@@ -1,6 +1,6 @@
 # firmware/ (ESP32 station)
 
-Spec: `docs/prompts/PROMPT_EE.md`. Contract: `shared/registers.yaml`, `README.md` section 4.
+Contract: `shared/registers.yaml`, `README.md` section 4.
 
 ## Status
 
@@ -66,8 +66,6 @@ python -m platformio device monitor          # 115200 baud, Ctrl+C to quit
 
 ## Wiring (module pin -> ESP32 pin)
 
-Drawn in `docs/wiring.svg` (wired parts so far, newest wire highlighted).
-
 Relay module (5 V, 2 channel, optocoupler type, blue JD-VCC jumper cap left in place):
 
 - Relay `VCC` (4-pin header) -> `VIN` (5 V from USB)
@@ -78,9 +76,7 @@ Relay module (5 V, 2 channel, optocoupler type, blue JD-VCC jumper cap left in p
 
 Relay behaviour (measured, this module): **active LOW, releases cleanly at 3.3 V logic with VCC = 5 V and the JD-VCC cap on.** So the code drives `LOW` = on, `HIGH` = off; the floating-pin workaround from the spec is not needed. Relays are off from reset: the output latch is loaded HIGH through `gpio_set_level` before `pinMode(OUTPUT)`, first thing in `setup()`; floating pins also read as off on an active-LOW module. Each coil draws about 70 mA from USB through `VIN`; if the board drops off USB when a relay switches, use a direct laptop port and a short cable, or feed `JD-VCC` from a separate 5 V supply.
 
-**Full wiring through step 6** (breadboard holes, LEDs on GPIO 16/17/32 with 220 ohm, buzzer on GPIO 25, pin table, wiring rounds): `docs/wiring_full.svg`. It replaces `docs/wiring.svg` for building; same pins, same three moved wires.
-
-### Step 4 wiring (breadboard rails; see `docs/wiring.svg`)
+### Breadboard rails
 
 Rails: **5V rail** <- `VIN`; **3V3 rail** <- `3V3` (bottom row, first pin); **GND rail** <- `GND` (bottom row, next to 3V3). Relay GND stays on the GND next to `VIN`.
 Three existing wires move: relay `VCC` VIN -> 5V rail; OLED `VCC` 3V3 pin -> 3V3 rail; OLED `GND` -> GND rail.
