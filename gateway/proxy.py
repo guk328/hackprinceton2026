@@ -42,6 +42,7 @@ EXC_TARGET_FAILED = 0x0B   # "gateway target device failed to respond"
 READ_FCS = (1, 2, 3, 4)
 STRICTNESS = (ALLOW, HOLD, DENY)
 C2S, S2C, G2C = "client->station", "station->client", "gateway->client"
+TAMPER_SOURCE = "behind-gateway"   # src_ip of a LOGIC_TAMPER event: it did not come through us
 
 
 def with_write(snap: StationSnapshot, req: WriteRequest) -> StationSnapshot:
@@ -112,6 +113,8 @@ class Proxy:
     async def start(self):
         if self.poller is None:
             self.poller = StationPoller(*self.station, regs=self.regs)
+        if self.poller.on_tamper is None:
+            self.poller.on_tamper = self.record_tamper
         self._server = await asyncio.start_server(self._on_client, self.host, self.port)
         self.port = self._server.sockets[0].getsockname()[1]  # real port if 0 was asked
         log.info("proxy on %s:%d -> station %s:%d", self.host, self.port, *self.station)
@@ -176,6 +179,27 @@ class Proxy:
         except Exception:
             log.exception("could not store an event")
             return None
+
+    def record_tamper(self, info: dict):
+        """Settings changed behind the gateway (StationPoller found it). Stored as an event in
+        the README 4.4 shape: decision DENY (the gateway does not accept the change), first
+        reason starting "LOGIC_TAMPER", old_value = last known good, new_value = what is there."""
+        if self.store is None:
+            return None
+        ch = info["changed"]
+        first = ch[0] if ch else {"address": None, "name": "LOGIC_HASH",
+                                  "last_known_good": info["expected_hash"],
+                                  "current": info["station_hash"]}
+        reasons = ["LOGIC_TAMPER: " + (", ".join(
+            f"{c['name']} {c['last_known_good']} -> {c['current']}" for c in ch) or "hash differs")
+            + " without a command through the gateway",
+            f"station LOGIC_HASH {info['station_hash']}, last known good {info['expected_hash']}"]
+        return self.store.save_event({
+            "src_ip": TAMPER_SOURCE, "function": None, "kind": "register",
+            "address": first["address"], "name": first["name"],
+            "old_value": first["last_known_good"], "new_value": first["current"],
+            "decision": DENY, "reasons": reasons, "prediction": None,
+            "station": self._station_view(self.poller.snapshot)})
 
     async def _decide_frame(self, writes, src=None, frame_row=None):
         """Strictest verdict over every write in the frame. Anything that goes

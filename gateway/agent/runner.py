@@ -26,8 +26,17 @@ MAX_SETTLE = 3
 TRIGGERS = ("HOLD", "DENY")
 
 
+def is_tamper(event: dict) -> bool:
+    return str((event.get("reasons") or [""])[0]).startswith("LOGIC_TAMPER")
+
+
 def template_text(event: dict) -> str:
     """The text the operator gets when the agent cannot write one."""
+    if is_tamper(event):
+        text = (f"Backflow: station settings were changed behind the gateway "
+                f"({event['reasons'][0][14:]}). The gateway put the last known good settings "
+                "back. Someone may have direct access to the controller. Reply BLOCK or ALLOW")
+        return text if len(text) <= 320 else text[:296].rstrip() + "... Reply BLOCK or ALLOW"
     what = event.get("name") or f"{event.get('kind') or 'function'} {event.get('address') or event.get('function')}"
     change = "" if event.get("new_value") is None else (
         f" {event['old_value']} -> {event['new_value']}" if event.get("old_value") is not None
@@ -45,7 +54,7 @@ def template_text(event: dict) -> str:
 
 class Runner:
     def __init__(self, store, channel, blocklist, *, make_agent=None, budget=None, release=None,
-                 held=None, reports_dir=None, debounce_s: float = DEBOUNCE_S,
+                 held=None, reports_dir=None, revert=None, debounce_s: float = DEBOUNCE_S,
                  time_limit_s: float = TIME_LIMIT_S):
         """`make_agent()` builds the agent (called once, lazily, in a worker thread; None or a
         failure means templated texts only). `release(event_id)` is the plain-code release
@@ -54,6 +63,7 @@ class Runner:
         self.make_agent, self.budget, self.release, self.held = make_agent, budget, release, held
         self.debounce_s, self.time_limit_s = debounce_s, time_limit_s
         self.reports_dir = reports_dir    # None: no reports
+        self.revert = revert              # plain-code revert for a tamper when the agent is not used
         self.sessions: dict[str, Session] = {}
         self._agent = None
         self._agent_failed = make_agent is None
@@ -155,6 +165,12 @@ class Runner:
         if why:
             self.sessions.pop(eid, None)       # replies are handled by plain code from here
             self._step(eid, "status", f"Agent not used: {why}. Sending the standard text.")
+            if is_tamper(event) and self.revert is not None:
+                try:
+                    values = await asyncio.to_thread(self.revert)
+                    self._step(eid, "action", f"Settings reverted to last known good: {values}")
+                except Exception as e:
+                    self._step(eid, "status", f"Could not revert the settings: {e}")
         if not any(m["event_id"] == eid for m in self.channel.inbox()):
             self.channel.send(eid, template_text(event))
         self._cost(eid)
@@ -189,8 +205,8 @@ class Runner:
             try:
                 self.blocklist.block(src, BLOCK_MINUTES)
                 self._step(eid, "action", f"Source {src} blocked for {BLOCK_MINUTES} min (operator said BLOCK)")
-            except (ValueError, TypeError):
-                self._step(eid, "action", f"Could not block source {src!r}")
+            except (ValueError, TypeError):   # a tamper has no network source to block
+                self._step(eid, "status", f"No network source to block for {eid}")
             cmd = self.held.by_event(eid) if self.held is not None else None
             if cmd is not None:
                 self.held.pop(cmd.id)

@@ -53,7 +53,8 @@ def build(cfg: dict, store, loop) -> dict:
 
     runner = Runner(store, channel, blocklist, budget=budget, held=proxy.held,
                     make_agent=make_agent if os.getenv("AGENT_MODEL") else None,
-                    release=lambda event_id: release(event_id, **kit), reports_dir=REPORTS_DIR)
+                    release=lambda event_id: release(event_id, **kit), reports_dir=REPORTS_DIR,
+                    revert=lambda: writer.restore_logic(poller.last_good_logic))
     def do_reset():
         return reset(store, blocklist=blocklist, held=proxy.held, channel=channel, runner=runner,
                      poller=poller, writer=writer, reports_dir=REPORTS_DIR)

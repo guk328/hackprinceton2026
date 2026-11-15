@@ -17,30 +17,13 @@ from typing import Literal
 from gateway import physics_client
 from gateway.events import EventStore, prediction_json
 from gateway.registers import RegisterMap, load_registers
-from gateway.station import LOGIC_ADDRS
+from gateway.station import LOGIC_ADDRS, crc16_modbus, logic_hash  # noqa: F401 (re-exported)
 
 MAX_TRAFFIC_ROWS = 50     # per call; the agent pages with `minutes` / `src_ip`
 MAX_VALUES = 16           # per frame (an FC16 frame can carry 123 registers)
 MAX_RAW_HEX = 48          # 24 bytes of the raw frame
 MAX_VIOLATIONS = 10
 EVENT_ID_PREFIX = "evt_"
-
-
-def crc16_modbus(data: bytes) -> int:
-    """CRC16/MODBUS (poly 0xA001 reflected, init 0xFFFF), as the station computes LOGIC_HASH."""
-    crc = 0xFFFF
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            crc = (crc >> 1) ^ 0xA001 if crc & 1 else crc >> 1
-    return crc
-
-
-def logic_hash(values: dict[int, int]) -> int | None:
-    """LOGIC_HASH of holding 0-4 (each register big-endian); None if any is missing."""
-    if any(a not in values for a in LOGIC_ADDRS):
-        return None
-    return crc16_modbus(b"".join(int(values[a]).to_bytes(2, "big") for a in LOGIC_ADDRS))
 
 
 def summarize_prediction(p: dict | None) -> dict | None:

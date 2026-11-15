@@ -35,7 +35,8 @@ function renderEvent(e) {
   const li = el("li", "ev");
   li.dataset.id = e.id;
   const decision = ["ALLOW", "HOLD", "DENY"].includes(e.decision) ? e.decision : "DENY";
-  li.append(el("div", `badge ${decision}`, decision));
+  const tamper = String((e.reasons && e.reasons[0]) || "").startsWith("LOGIC_TAMPER");
+  li.append(el("div", `badge ${decision}`, tamper ? "TAMPER" : decision));
   const what = el("div", "what");
   const old = e.old_value === undefined || e.old_value === null ? "" : `${e.old_value} → `;
   what.append(document.createTextNode(`${e.name ?? `${e.kind ?? "function"} ${e.address ?? e.function}`} `));
