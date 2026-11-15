@@ -118,7 +118,7 @@ def test_dashboard_served_at_root_without_shadowing_routes(client, store):
     r = client.get("/")
     assert r.status_code == 200 and "text/html" in r.headers["content-type"]
     assert 'href="login.html"' in r.text                          # the landing page
-    assert '<script src="console.js">' in client.get("/console.html").text
+    assert '<script src="console.js' in client.get("/console.html").text
     js = client.get("/data.js")
     assert js.status_code == 200 and 'new EventSource("/stream")' in js.text
     assert client.get("/replay/scenario_0_1.js").status_code == 200   # replay works offline

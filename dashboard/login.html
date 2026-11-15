@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sign in · Backflow</title>
-<link rel="stylesheet" href="site.css?v=3">
+<link rel="stylesheet" href="site.css?v=4">
+<link rel="icon" href="data:,">
 </head>
 <body>
 <header class="bar">
@@ -21,17 +22,17 @@
     <input id="pw" type="password" autocomplete="current-password" required autofocus>
     <button type="submit">Sign in</button>
     <div class="err" id="err" role="alert"></div>
-    <div class="notice" id="user-note">
-      <b>What this login is, and is not.</b>
-      <ul>
+    <p><a href="console.html?mode=replay">Watch the recorded run instead (no sign-in)</a></p>
+  </form>
+  <div class="notice" id="user-note">
+    <b>What this login is, and is not</b>
+    <ul>
         <li>One shared operator account. There are no separate users or roles.</li>
         <li>It guards the operator actions: reading the operator's messages, Approve and Reject, and the demo reset. The command feed and plant values are readable without it.</li>
         <li>The session is a signed cookie that lasts 12 hours and ends when the gateway restarts. Wrong passwords are rate-limited.</li>
         <li>The demo runs over plain HTTP on a local hotspot. A real deployment needs TLS and per-person accounts. We have not built those.</li>
       </ul>
-    </div>
-    <p style="margin-top:16px"><a href="console.html?mode=replay">Watch the recorded run instead (no sign-in)</a></p>
-  </form>
+  </div>
 </main>
 <script>
 "use strict";

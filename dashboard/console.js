@@ -100,10 +100,10 @@
   on("player", (p) => {
     if (p.missing) { setMode("down", "REPLAY", "No recording found (dashboard/replay/scenario_0_1.js). Record one with tools/record_replay.py."); return; }
     const m = p.meta;
-    const when = new Date(m.t0 * 1000).toLocaleString([], { dateStyle: "medium", timeStyle: "short", hour12: false });
+    const when = new Date(m.t0 * 1000).toLocaleString([], { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
     setMode("replay", "REPLAY", p.waiting
-      ? `Recorded run of ${when}. Paused: press ${p.waiting.reply === "BLOCK" ? "Reject" : "Approve"} under Held commands, as the operator did.`
-      : `Recorded run of ${when} against ${m.station}. Not live: nothing here reaches a station.`);
+      ? `Recorded ${when}. Paused: press ${p.waiting.reply === "BLOCK" ? "Reject" : "Approve"} under Held commands, as the operator did.`
+      : `Recorded ${when} on ${m.station}. Not live: nothing here reaches a station.`);
     $("pl-toggle").textContent = p.done ? "Play again" : p.playing ? "Pause" : "Play";
     $("pl-bar").value = p.total ? Math.min(1, p.t / p.total) : 0;
     document.querySelectorAll(".pl-speed").forEach((b) => b.setAttribute("aria-pressed", String(+b.dataset.x === p.speed)));
